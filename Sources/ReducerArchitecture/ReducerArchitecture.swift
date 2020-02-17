@@ -24,6 +24,11 @@ public struct StateReducer<Value, MutatingAction, EffectAction> {
     let run: (inout Value, MutatingAction) -> Effect?
     let effect: (Value, EffectAction) -> Effect
 
+    public init(run: @escaping (inout Value, MutatingAction) -> Effect?, effect: @escaping (Value, EffectAction) -> Effect) {
+        self.run = run
+        self.effect = effect
+    }
+
     public static func effect(_ body: @escaping () -> Action) -> Effect {
         Effect(
             Deferred {
