@@ -97,7 +97,7 @@ public class StateStore<State, MutatingAction, EffectAction>: ObservableObject {
             .eraseToAnyPublisher()
     }
 
-    public func updates<Value: Comparable>(on keyPath: KeyPath<State, Value>) -> AnyPublisher<Value, Never> {
+    public func updates<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> AnyPublisher<Value, Never> {
         updates(on: keyPath, compare: ==)
     }
 
@@ -115,7 +115,7 @@ public class StateStore<State, MutatingAction, EffectAction>: ObservableObject {
         )
     }
 
-    public func bind<OtherState, OtherValue: Comparable, OtherMutatingAction, OtherEffectAction>(
+    public func bind<OtherState, OtherValue: Equatable, OtherMutatingAction, OtherEffectAction>(
         to otherStore: StateStore<OtherState, OtherMutatingAction, OtherEffectAction>,
         on keyPath: KeyPath<OtherState, OtherValue>,
         with action: @escaping (OtherValue) -> Reducer.Action) {
