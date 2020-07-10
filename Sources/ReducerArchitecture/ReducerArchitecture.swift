@@ -8,18 +8,19 @@
 import SwiftUI
 import Combine
 
-public enum StateAction<MutatingAction, EffectAction> {
+public enum StateAction<MutatingAction, EffectAction, PublishedValue> {
     case mutating(MutatingAction)
     case effect(EffectAction)
     case noAction
+    case publish(PublishedValue)
 }
 
-public typealias StateEffect<MutatingAction, EffectAction> =
-    AnyPublisher<StateAction<MutatingAction, EffectAction>, Never>
+public typealias StateEffect<MutatingAction, EffectAction, PublishedValue> =
+    AnyPublisher<StateAction<MutatingAction, EffectAction, PublishedValue>, Never>
 
-public struct StateReducer<Value, MutatingAction, EffectAction> {
-    public typealias Action = StateAction<MutatingAction, EffectAction>
-    public typealias Effect = StateEffect<MutatingAction, EffectAction>
+public struct StateReducer<Value, MutatingAction, EffectAction, PublishedValue> {
+    public typealias Action = StateAction<MutatingAction, EffectAction, PublishedValue>
+    public typealias Effect = StateEffect<MutatingAction, EffectAction, PublishedValue>
 
     let run: (inout Value, MutatingAction) -> Effect?
     let effect: (Value, EffectAction) -> Effect
@@ -46,14 +47,15 @@ extension StateReducer where EffectAction == Never {
     }
 }
 
-public class StateStore<State, MutatingAction, EffectAction>: ObservableObject {
-    public typealias Reducer = StateReducer<State, MutatingAction, EffectAction>
+public class StateStore<State, MutatingAction, EffectAction, PublishedValue>: ObservableObject {
+    public typealias Reducer = StateReducer<State, MutatingAction, EffectAction, PublishedValue>
 
     private let reducer: Reducer
     private var subscriptions = Set<AnyCancellable>()
     private var effects = PassthroughSubject<Reducer.Effect, Never>()
 
     @Published public private(set) var state: State
+    var publishedValue = PassthroughSubject<PublishedValue, Never>()
 
     public init(_ initialValue: State, reducer: Reducer) {
         self.reducer = reducer
@@ -80,6 +82,9 @@ public class StateStore<State, MutatingAction, EffectAction>: ObservableObject {
             effect = reducer.effect(state, effectAction)
         case .noAction:
             effect = nil
+        case .publish(let value):
+            publishedValue.send(value)
+            effect = nil
         }
 
         if let e = effect {
@@ -101,8 +106,8 @@ public class StateStore<State, MutatingAction, EffectAction>: ObservableObject {
         updates(on: keyPath, compare: ==)
     }
 
-    public func bind<OtherState, OtherValue, OtherMutatingAction, OtherEffectAction>(
-        to otherStore: StateStore<OtherState, OtherMutatingAction, OtherEffectAction>,
+    public func bind<OtherState, OtherValue, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>(
+        to otherStore: StateStore<OtherState, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>,
         on keyPath: KeyPath<OtherState, OtherValue>,
         with action: @escaping (OtherValue) -> Reducer.Action,
         compare: @escaping (OtherValue, OtherValue) -> Bool
@@ -115,8 +120,8 @@ public class StateStore<State, MutatingAction, EffectAction>: ObservableObject {
         )
     }
 
-    public func bind<OtherState, OtherValue: Equatable, OtherMutatingAction, OtherEffectAction>(
-        to otherStore: StateStore<OtherState, OtherMutatingAction, OtherEffectAction>,
+    public func bind<OtherState, OtherValue: Equatable, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>(
+        to otherStore: StateStore<OtherState, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>,
         on keyPath: KeyPath<OtherState, OtherValue>,
         with action: @escaping (OtherValue) -> Reducer.Action) {
         bind(to: otherStore, on: keyPath, with: action, compare: ==)
