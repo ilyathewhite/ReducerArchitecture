@@ -242,7 +242,9 @@ public class StateStore<Environment, State, MutatingAction, EffectAction, Publis
     // MARK: - AnyStore
 
     public var value: AnyPublisher<PublishedValue, Cancel> {
-        publishedValue.eraseToAnyPublisher()
+        publishedValue
+            .receive(on: DispatchQueue.main)
+            .eraseToAnyPublisher()
     }
 
     public func publish(_ value: PublishedValue) {
