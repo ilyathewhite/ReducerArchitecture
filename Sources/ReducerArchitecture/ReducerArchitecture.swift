@@ -1,8 +1,9 @@
 //
 //  ReducerArchitecture.swift
+//  Rocket Insights
 //
-//  Created by Ilya Belenkiy on 10/31/19.
-//  Copyright © 2019 Ilya Belenkiy. All rights reserved.
+//  Created by Ilya Belenkiy on 03/30/21.
+//  Copyright © 2021 Rocket Insights. All rights reserved.
 //
 
 import SwiftUI

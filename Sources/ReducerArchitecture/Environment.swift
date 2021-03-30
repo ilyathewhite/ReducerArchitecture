@@ -1,8 +1,9 @@
 //
-//  File.swift
-//  
+//  Environment.swift
+//  Rocket Insights
 //
-//  Created by Ilya Belenkiy on 3/18/21.
+//  Created by Ilya Belenkiy on 03/30/21.
+//  Copyright © 2021 Rocket Insights. All rights reserved.
 //
 
 import Foundation
