@@ -119,7 +119,7 @@ extension StateReducer where EffectAction == Never {
     }
 }
 
-public class StateStore<Environment, State, MutatingAction, EffectAction, PublishedValue>: ObservableObject, AnyStore {
+open class StateStore<Environment, State, MutatingAction, EffectAction, PublishedValue>: ObservableObject, AnyStore {
     public typealias Reducer = StateReducer<Environment, State, MutatingAction, EffectAction, PublishedValue>
 
     public var identifier: String
