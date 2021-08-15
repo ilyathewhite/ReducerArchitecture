@@ -5,9 +5,9 @@
         "package": "CombineEx",
         "repositoryURL": "https://github.com/RocketLaunchpad/CombineEx.git",
         "state": {
-          "branch": null,
-          "revision": "f77496af0df6563525ae3e432d4a3fa894a6b4e1",
-          "version": "1.0.0"
+          "branch": "main",
+          "revision": "4c0a8201655c98542c3c6069ff5ab21260ddbc71",
+          "version": null
         }
       },
       {
