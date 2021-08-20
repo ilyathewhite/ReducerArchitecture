@@ -236,6 +236,16 @@ open class StateStore<Environment, State, MutatingAction, EffectAction, Publishe
         bind(to: otherStore, on: keyPath, with: action, compare: ==)
     }
 
+    public func bindPublishedValue<OtherEnvironment, OtherState, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>(
+        to otherStore: StateStore<OtherEnvironment, OtherState, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>,
+        with action: @escaping (OtherPublishedValue) -> Reducer.Action) {
+            addEffect(
+                otherStore.publishedValue.map { action($0) }
+                    .catch { _ in Reducer.effect(.cancel) }
+                    .eraseToAnyPublisher()
+            )
+    }
+
     public func binding<Value>(_ keyPath: KeyPath<State, Value>, _ action: @escaping (Value) -> MutatingAction) -> Binding<Value> {
         return Binding(get: { self.state[keyPath: keyPath] }, set: { self.send(.mutating(action($0))) })
     }
