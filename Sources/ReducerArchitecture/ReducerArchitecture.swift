@@ -239,7 +239,7 @@ open class StateStore<Environment, State, MutatingAction, EffectAction, Publishe
     }
 
     public func bindPublishedValue<OtherEnvironment, OtherState, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>(
-        to otherStore: StateStore<OtherEnvironment, OtherState, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>,
+        of otherStore: StateStore<OtherEnvironment, OtherState, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>,
         with action: @escaping (OtherPublishedValue) -> Reducer.Action) {
             addEffect(
                 otherStore.publishedValue.map { action($0) }
