@@ -20,7 +20,16 @@ public extension Namespace {
     }
 }
 
-public typealias StoreNamespace = Namespace
+public protocol StoreNamespace: Namespace {
+    associatedtype StoreEnvironment
+    associatedtype StoreState
+    associatedtype MutatingAction
+    associatedtype EffectAction
+    associatedtype PublishedValue
+
+    typealias Store = StateStore<StoreEnvironment, StoreState, MutatingAction, EffectAction, PublishedValue>
+    typealias Reducer = Store.Reducer
+}
 
 public enum UIValue<T> {
     case fromUI(T)
@@ -121,8 +130,10 @@ extension StateReducer where EffectAction == Never {
     }
 }
 
-open class StateStore<Environment, State, MutatingAction, EffectAction, PublishedValue>: ObservableObject, AnyStore {
+// StateStore should not be subclassed because of a bug in SwiftUI
+public class StateStore<Environment, State, MutatingAction, EffectAction, PublishedValue>: ObservableObject, AnyStore {
     public typealias Reducer = StateReducer<Environment, State, MutatingAction, EffectAction, PublishedValue>
+    public typealias ValuePublisher = AnyPublisher<PublishedValue, Cancel>
 
     public var identifier: String
 
