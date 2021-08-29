@@ -9,14 +9,14 @@
 import SwiftUI
 
 public protocol StoreContentView: View {
-    associatedtype Namespace: StoreNamespace
-    typealias Store = Namespace.Store
+    associatedtype StoreWrapper: StoreNamespace
+    typealias Store = StoreWrapper.Store
     var store: Store { get }
     init(store: Store)
 }
 
 public protocol StoreUIWrapper {
-    associatedtype ContentView: StoreContentView where ContentView.Namespace == Self
+    associatedtype ContentView: StoreContentView where ContentView.StoreWrapper == Self
 }
 
 public struct StoreUI<UIWrapper: StoreUIWrapper> {
