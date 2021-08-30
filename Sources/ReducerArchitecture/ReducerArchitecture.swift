@@ -131,7 +131,7 @@ extension StateReducer where EffectAction == Never {
 }
 
 // StateStore should not be subclassed because of a bug in SwiftUI
-public class StateStore<Environment, State, MutatingAction, EffectAction, PublishedValue>: ObservableObject, AnyStore {
+public final class StateStore<Environment, State, MutatingAction, EffectAction, PublishedValue>: ObservableObject, AnyStore {
     public typealias Reducer = StateReducer<Environment, State, MutatingAction, EffectAction, PublishedValue>
     public typealias ValuePublisher = AnyPublisher<PublishedValue, Cancel>
 
