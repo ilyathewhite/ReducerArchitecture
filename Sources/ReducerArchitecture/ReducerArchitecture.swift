@@ -281,6 +281,14 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
             .eraseToAnyPublisher()
     }
 
+    public var valueResult: AnyPublisher<Result<PublishedValue, Cancel>, Never> {
+        publishedValue
+            .receive(on: DispatchQueue.main)
+            .map { .success($0) }
+            .catch { Just(.failure($0)) }
+            .eraseToAnyPublisher()
+    }
+
     public func publish(_ value: PublishedValue) {
         send(.publish(value))
     }
