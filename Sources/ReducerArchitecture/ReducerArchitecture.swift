@@ -6,7 +6,16 @@
 //  Copyright © 2021 Rocket Insights. All rights reserved.
 //
 
+#if canImport(SwiftUI)
 import SwiftUI
+#else
+public typealias Animation = Void
+public func withAnimation<Result>(_ animation: Animation? = nil, _ body: () throws -> Result) rethrows -> Result {
+    try body()
+}
+#endif
+
+import Foundation
 import Combine
 import CombineEx
 
@@ -85,7 +94,7 @@ public protocol AnyStore {
 }
 
 public enum StateAction<MutatingAction, EffectAction, PublishedValue> {
-    case mutating(MutatingAction)
+    case mutating(MutatingAction, animated: Bool = false, Animation? = nil)
     case effect(EffectAction)
     case noAction
     case publish(PublishedValue)
@@ -157,7 +166,7 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
         sentMutatingActions = sentActions
             .compactMap { anyAction in
                 switch anyAction {
-                case .mutating(let action):
+                case .mutating(let action, _, _):
                     return action
                 default:
                     return nil
@@ -193,8 +202,13 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
 
         let effect: Reducer.Effect?
         switch action {
-        case .mutating(let mutatingAction):
-            effect = reducer.run(&state, mutatingAction)
+        case .mutating(let mutatingAction, let animate, let animation):
+            if animate {
+                effect = withAnimation(animation) { reducer.run(&state, mutatingAction) }
+            }
+            else {
+                effect = reducer.run(&state, mutatingAction)
+            }
         case .effect(let effectAction):
             effect = reducer.effect(environment, state, effectAction)
         case .noAction:
@@ -257,20 +271,6 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
                     .catch { _ in Reducer.effect(.cancel) }
                     .eraseToAnyPublisher()
             )
-    }
-
-    public func binding<Value>(_ keyPath: KeyPath<State, Value>, _ action: @escaping (Value) -> MutatingAction) -> Binding<Value> {
-        return Binding(get: { self.state[keyPath: keyPath] }, set: { self.send(.mutating(action($0))) })
-    }
-
-    public func readOnlyBinding<Value>(_ keyPath: KeyPath<State, Value>) -> Binding<Value> {
-        return Binding(
-            get: { self.state[keyPath: keyPath] },
-            set: { _ in
-                assertionFailure()
-                self.send(.noAction)
-            }
-        )
     }
 
     // MARK: - AnyStore

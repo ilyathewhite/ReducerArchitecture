@@ -8,6 +8,22 @@
 #if canImport(SwiftUI)
 import SwiftUI
 
+public extension StateStore {
+    public func binding<Value>(_ keyPath: KeyPath<State, Value>, _ action: @escaping (Value) -> MutatingAction) -> Binding<Value> {
+        return Binding(get: { self.state[keyPath: keyPath] }, set: { self.send(.mutating(action($0))) })
+    }
+
+    public func readOnlyBinding<Value>(_ keyPath: KeyPath<State, Value>) -> Binding<Value> {
+        return Binding(
+            get: { self.state[keyPath: keyPath] },
+            set: { _ in
+                assertionFailure()
+                self.send(.noAction)
+            }
+        )
+    }
+}
+
 public protocol StoreContentView: View {
     associatedtype StoreWrapper: StoreNamespace
     typealias Store = StoreWrapper.Store
