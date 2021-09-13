@@ -84,10 +84,12 @@ public enum UIEndValue {
     }
 }
 
-public protocol AnyStore {
+public protocol AnyStore: AnyObject {
     associatedtype PublishedValue
 
     var identifier: String { get }
+    var objectState: [String: AnyObject] { get set }
+
     var value: AnyPublisher<PublishedValue, Cancel> { get }
     func publish(_ value: PublishedValue)
     func cancel()
@@ -157,6 +159,8 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
     private var sentActions = PassthroughSubject<Reducer.Action, Never>()
     public var sentMutatingActions: AnyPublisher<MutatingAction, Never>
     public var logActions = false
+
+    public var objectState: [String: AnyObject] = [:]
 
     public init(_ identifier: String, _ initialValue: State, reducer: Reducer) {
         self.identifier = identifier
@@ -295,5 +299,36 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
 
     public func cancel() {
         send(.cancel)
+    }
+}
+
+
+@propertyWrapper public struct StoreObjectState<Store: AnyStore, Value: AnyObject> {
+    public let key: String
+    public let store: Store
+
+    public var wrappedValue: Value {
+        get {
+            guard let anyValue = store.objectState[key] else {
+                fatalError("no value")
+            }
+            guard let value = anyValue as? Value else {
+                let expected = String(reflecting: Value.self)
+                let actual = String(reflecting: type(of: anyValue))
+                fatalError("wrong type: expected \(expected), got: \(actual)")
+            }
+            return value
+        }
+        set {
+            store.objectState[key] = newValue
+        }
+    }
+
+    public init(key customKey: String? = nil, store: Store, value: @autoclosure () -> Value) {
+        self.key = customKey ?? String(reflecting: Value.self)
+        self.store = store
+        if store.objectState[key] == nil {
+            store.objectState[key] = value()
+        }
     }
 }
