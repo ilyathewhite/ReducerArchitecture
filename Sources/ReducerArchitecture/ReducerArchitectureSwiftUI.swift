@@ -42,15 +42,25 @@ public protocol StoreUIWrapper {
 
 public struct StoreUI<UIWrapper: StoreUIWrapper> {
     public let store: UIWrapper.Store
+    public let _canActivateLink: (UIWrapper.Store.PublishedValue) -> Bool
 
-    public init(_ store: UIWrapper.Store) {
+    public init(
+        _ store: UIWrapper.Store,
+        canActivateLink: @escaping (UIWrapper.Store.PublishedValue) -> Bool = { _ in true }
+    ) {
         self.store = store
+        _canActivateLink = canActivateLink
     }
 
     public func makeView() -> UIWrapper.ContentView {
         UIWrapper.ContentView(store: store)
     }
+
     public var value: UIWrapper.Store.ValuePublisher { store.value }
+
+    public func canActivateLink(_ value: UIWrapper.Store.PublishedValue) -> Bool {
+        _canActivateLink(value)
+    }
 }
 
 #endif
