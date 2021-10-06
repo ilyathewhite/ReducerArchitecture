@@ -111,9 +111,9 @@ public struct StateReducer<Environment, Value, MutatingAction, EffectAction, Pub
     public typealias Effect = StateEffect<MutatingAction, EffectAction, PublishedValue>
 
     let run: (inout Value, MutatingAction) -> Effect?
-    let effect: (Environment?, Value, EffectAction) -> Effect
+    let effect: (Environment, Value, EffectAction) -> Effect
 
-    public init(run: @escaping (inout Value, MutatingAction) -> Effect?, effect: @escaping (Environment?, Value, EffectAction) -> Effect) {
+    public init(run: @escaping (inout Value, MutatingAction) -> Effect?, effect: @escaping (Environment, Value, EffectAction) -> Effect) {
         self.run = run
         self.effect = effect
     }
@@ -148,7 +148,16 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
 
     public var identifier: String
 
-    public var environment: Environment?
+    public var environment: Environment? {
+        didSet {
+            envSource.send(environment)
+        }
+    }
+    private var envSource: CurrentValueSubject<Environment?, Never> = .init(nil)
+    private func getEnv() -> AnySingleValuePublisher<Environment, Never> {
+        envSource.compactMap { $0 }.first().eraseType()
+    }
+
     private let reducer: Reducer
     private var subscriptions = Set<AnyCancellable>()
     private var effects = PassthroughSubject<Reducer.Effect, Never>()
@@ -162,10 +171,11 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
 
     public var objectState: [String: AnyObject] = [:]
 
-    public init(_ identifier: String, _ initialValue: State, reducer: Reducer) {
+    public init(_ identifier: String, _ initialValue: State, reducer: Reducer, env: Environment?) {
         self.identifier = identifier
         self.reducer = reducer
         self.state = initialValue
+        self.environment = env
 
         sentMutatingActions = sentActions
             .compactMap { anyAction in
@@ -187,6 +197,18 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
             // TODO: [maybe] reevaluate after fixing memory leaks
             .sink(receiveValue: { [weak self] in self?.send($0) })
             .store(in: &subscriptions)
+
+        envSource.send(environment)
+    }
+
+    public convenience init(_ identifier: String, _ initialValue: State, reducer: Reducer)
+    where Environment == Never, EffectAction == Never {
+        self.init(identifier, initialValue, reducer: reducer, env: nil)
+    }
+
+    public convenience init(_ identifier: String, _ initialValue: State, reducer: Reducer) where Environment == Void {
+        self.init(identifier, initialValue, reducer: reducer, env: ())
+        envSource.send(())
     }
 
     public func addEffect(_ effect: Reducer.Effect) {
@@ -214,7 +236,7 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
                 effect = reducer.run(&state, mutatingAction)
             }
         case .effect(let effectAction):
-            effect = reducer.effect(environment, state, effectAction)
+            effect = getEnv().flatMap { self.reducer.effect($0, self.state, effectAction) }.eraseToAnyPublisher()
         case .noAction:
             effect = nil
         case .publish(let value):
@@ -301,7 +323,6 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
         send(.cancel)
     }
 }
-
 
 @propertyWrapper public struct StoreObjectState<Store: AnyStore, Value: AnyObject> {
     public let key: String
