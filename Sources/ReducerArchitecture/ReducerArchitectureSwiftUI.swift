@@ -14,8 +14,17 @@ public extension StateStore {
         animated: Bool = false,
         _ action: @escaping (Value) -> MutatingAction
     )
-    -> Binding<Value> {
-        return Binding(get: { self.state[keyPath: keyPath] }, set: { self.send(.mutating(action($0))) })
+    ->
+    Binding<Value> where Value: Equatable
+    {
+        return Binding(
+            get: { self.state[keyPath: keyPath] },
+            set: {
+                if self.state[keyPath: keyPath] != $0 {
+                    self.send(.mutating(action($0)))
+                }
+            }
+        )
     }
 
     func readOnlyBinding<Value>(_ keyPath: KeyPath<State, Value>) -> Binding<Value> {
