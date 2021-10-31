@@ -72,4 +72,25 @@ public struct StoreUI<UIWrapper: StoreUIWrapper> {
     }
 }
 
+public struct ConnectOnAppear<S: AnyStore>: ViewModifier {
+    public let store: S
+    public let connect: () -> Void
+
+    public func body(content: Content) -> some View {
+        content
+            .onAppear {
+                guard !store.isConnectedToUI else { return }
+                store.isConnectedToUI = true
+                connect()
+            }
+            .id(store.id)
+    }
+}
+
+public extension View {
+    func connectOnAppear<S: AnyStore>(_ store: S, connect: @escaping () -> Void) -> some View {
+        modifier(ConnectOnAppear(store: store, connect: connect))
+    }
+}
+
 #endif

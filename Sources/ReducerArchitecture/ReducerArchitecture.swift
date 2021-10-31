@@ -6,6 +6,7 @@
 //  Copyright © 2021 Rocket Insights. All rights reserved.
 //
 
+import FoundationEx
 #if canImport(SwiftUI)
 import SwiftUI
 #else
@@ -84,11 +85,12 @@ public enum UIEndValue {
     }
 }
 
-public protocol AnyStore: AnyObject {
+public protocol AnyStore: AnyObject, IdentifiableAsSelf {
     associatedtype PublishedValue
 
     var identifier: String { get }
     var objectState: [String: AnyObject] { get set }
+    var isConnectedToUI: Bool { get set }
 
     var value: AnyPublisher<PublishedValue, Cancel> { get }
     func publish(_ value: PublishedValue)
@@ -170,6 +172,7 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
     public var logActions = false
 
     public var objectState: [String: AnyObject] = [:]
+    public var isConnectedToUI = false
 
     public init(_ identifier: String, _ initialValue: State, reducer: Reducer, env: Environment?) {
         self.identifier = identifier
