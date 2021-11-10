@@ -72,6 +72,12 @@ public struct StoreUI<UIWrapper: StoreUIWrapper> {
     }
 }
 
+extension StoreUI: Identifiable {
+    public var id: UIWrapper.Store.ID {
+        store.id
+    }
+}
+
 public struct ConnectOnAppear<S: AnyStore>: ViewModifier {
     public let store: S
     public let connect: () -> Void
