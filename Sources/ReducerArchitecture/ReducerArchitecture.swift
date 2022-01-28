@@ -112,6 +112,8 @@ public struct StateReducer<Environment, Value, MutatingAction, EffectAction, Pub
     public typealias Action = StateAction<MutatingAction, EffectAction, PublishedValue>
     public typealias Effect = StateEffect<MutatingAction, EffectAction, PublishedValue>
 
+    public typealias MutatingAction = MutatingAction
+
     let run: (inout Value, MutatingAction) -> Effect?
     let effect: (Environment, Value, EffectAction) -> Effect
 
