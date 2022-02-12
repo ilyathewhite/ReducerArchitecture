@@ -11,7 +11,7 @@ import SwiftUI
 public extension StateStore {
     func binding<Value>(
         _ keyPath: KeyPath<State, Value>,
-        animated: Bool = false,
+        animation: Animation? = nil,
         _ action: @escaping (Value) -> MutatingAction
     )
     ->
@@ -21,7 +21,12 @@ public extension StateStore {
             get: { self.state[keyPath: keyPath] },
             set: {
                 if self.state[keyPath: keyPath] != $0 {
-                    self.send(.mutating(action($0)))
+                    if let animation = animation {
+                        self.send(.mutating(action($0), animated: true, animation))
+                    }
+                    else {
+                        self.send(.mutating(action($0)))
+                    }
                 }
             }
         )
