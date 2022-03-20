@@ -329,6 +329,17 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
     }
 }
 
+extension StateStore {
+    public func pausedTyping(for time: TimeInterval = 0.5, keyPath: KeyPath<State, String>, action: MutatingAction) -> Reducer.Effect {
+        updates(on: keyPath)
+            .debounce(for: .init(time), scheduler: RunLoop.main)
+            .map { _ in
+                .mutating(action)
+            }
+            .eraseToAnyPublisher()
+    }
+}
+
 @propertyWrapper public struct StoreObjectState<Store: AnyStore, Value: AnyObject> {
     public let key: String
     public let store: Store
