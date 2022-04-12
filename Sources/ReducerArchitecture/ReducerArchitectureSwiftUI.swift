@@ -11,8 +11,8 @@ import SwiftUI
 public extension StateStore {
     func binding<Value>(
         _ keyPath: KeyPath<State, Value>,
-        animation: Animation? = nil,
-        _ action: @escaping (Value) -> MutatingAction
+        _ action: @escaping (Value) -> MutatingAction,
+        animation: Animation? = nil
     )
     ->
     Binding<Value> where Value: Equatable
