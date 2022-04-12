@@ -98,7 +98,7 @@ public protocol AnyStore: AnyObject, IdentifiableAsSelf {
 }
 
 public enum StateAction<MutatingAction, EffectAction, PublishedValue> {
-    case mutating(MutatingAction, animated: Bool = false, Animation? = nil)
+    case mutating(MutatingAction, animated: Bool = false, Animation? = .default)
     case effect(EffectAction)
     case noAction
     case publish(PublishedValue)
