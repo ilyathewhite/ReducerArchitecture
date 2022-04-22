@@ -85,6 +85,18 @@ public enum UIEndValue {
     }
 }
 
+public struct AsyncResult<T: Equatable>: Equatable {
+    public var value: T? {
+        didSet {
+            count += 1
+        }
+    }
+
+    public init() {}
+
+    private(set) var count = 0
+}
+
 public protocol AnyStore: AnyObject, IdentifiableAsSelf {
     associatedtype PublishedValue
 
@@ -302,6 +314,16 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
                     .catch { _ in Reducer.effect(.cancel) }
                     .eraseToAnyPublisher()
             )
+    }
+
+    public func result<T: Equatable>(_ keyPath: KeyPath<State, AsyncResult<T>>) -> AnySingleValuePublisher<T, Never> {
+        let prevCount = state[keyPath: keyPath].count
+        return self.$state
+            .map { $0[keyPath: keyPath] }
+            .removeDuplicates()
+            .first { ($0.count > prevCount) && ($0.value != nil) }
+            .compactMap { $0.value }
+            .eraseType()
     }
 
     // MARK: - AnyStore
