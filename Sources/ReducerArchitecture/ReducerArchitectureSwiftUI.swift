@@ -50,20 +50,15 @@ public protocol StoreContentView: View {
     init(store: Store)
 }
 
-public protocol StoreUIWrapper {
+public protocol StoreUIWrapper: StoreNamespace {
     associatedtype ContentView: StoreContentView where ContentView.StoreWrapper == Self
 }
 
 public struct StoreUI<UIWrapper: StoreUIWrapper> {
     public let store: UIWrapper.Store
-    public let _canActivateLink: (UIWrapper.Store.PublishedValue) -> Bool
 
-    public init(
-        _ store: UIWrapper.Store,
-        canActivateLink: @escaping (UIWrapper.Store.PublishedValue) -> Bool = { _ in true }
-    ) {
+    public init(_ store: UIWrapper.Store) {
         self.store = store
-        _canActivateLink = canActivateLink
     }
 
     public func makeView() -> UIWrapper.ContentView {
@@ -71,10 +66,6 @@ public struct StoreUI<UIWrapper: StoreUIWrapper> {
     }
 
     public var value: UIWrapper.Store.ValuePublisher { store.value }
-
-    public func canActivateLink(_ value: UIWrapper.Store.PublishedValue) -> Bool {
-        _canActivateLink(value)
-    }
 }
 
 extension StoreUI: Identifiable {
