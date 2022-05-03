@@ -285,6 +285,19 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
         updates(on: keyPath, compare: ==)
     }
 
+    public func distinctValues<Value>(
+        on keyPath: KeyPath<State, Value>,
+        compare: @escaping (Value, Value) -> Bool) -> AnyPublisher<Value, Never> {
+        $state
+            .map(keyPath)
+            .removeDuplicates(by: compare)
+            .eraseToAnyPublisher()
+    }
+
+    public func distinctValues<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> AnyPublisher<Value, Never> {
+        distinctValues(on: keyPath, compare: ==)
+    }
+
     public func bind<OtherEnvironment, OtherState, OtherValue, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>(
         to otherStore: StateStore<OtherEnvironment, OtherState, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>,
         on keyPath: KeyPath<OtherState, OtherValue>,
@@ -293,7 +306,7 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
     ) {
         addEffect(
             otherStore
-                .updates(on: keyPath, compare: compare)
+                .distinctValues(on: keyPath, compare: compare)
                 .map { action($0) }
                 .eraseToAnyPublisher()
         )
