@@ -21,14 +21,17 @@ public protocol BasicReducerArchitectureVC: UIViewController {
 public extension BasicReducerArchitectureVC {
     typealias Value = Store.PublishedValue
 
+    @MainActor
     var value: AnyPublisher<Store.PublishedValue, Cancel> {
         store.value
     }
 
+    @MainActor
     func publish(_ value: Value) {
         store.publish(value)
     }
 
+    @MainActor
     func cancel() {
         store.cancel()
     }

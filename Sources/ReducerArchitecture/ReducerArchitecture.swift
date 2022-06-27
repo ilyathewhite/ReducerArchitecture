@@ -100,13 +100,13 @@ public struct AsyncResult<T: Equatable>: Equatable {
 public protocol AnyStore: AnyObject, IdentifiableAsSelf {
     associatedtype PublishedValue
 
-    var identifier: String { get }
-    var objectState: [String: AnyObject] { get set }
-    var isConnectedToUI: Bool { get set }
+    @MainActor var identifier: String { get }
+    @MainActor var objectState: [String: AnyObject] { get set }
+    @MainActor var isConnectedToUI: Bool { get set }
 
-    var value: AnyPublisher<PublishedValue, Cancel> { get }
-    func publish(_ value: PublishedValue)
-    func cancel()
+    @MainActor var value: AnyPublisher<PublishedValue, Cancel> { get }
+    @MainActor func publish(_ value: PublishedValue)
+    @MainActor func cancel()
 }
 
 public enum StateAction<MutatingAction, EffectAction, PublishedValue> {
@@ -158,6 +158,7 @@ extension StateReducer where EffectAction == Never {
 }
 
 // StateStore should not be subclassed because of a bug in SwiftUI
+@MainActor
 public final class StateStore<Environment, State, MutatingAction, EffectAction, PublishedValue>: ObservableObject, AnyStore {
     public typealias Reducer = StateReducer<Environment, State, MutatingAction, EffectAction, PublishedValue>
     public typealias ValuePublisher = AnyPublisher<PublishedValue, Cancel>
@@ -375,6 +376,7 @@ extension StateStore {
     }
 }
 
+@MainActor
 @propertyWrapper public struct StoreObjectState<Store: AnyStore, Value: AnyObject> {
     public let key: String
     public let store: Store

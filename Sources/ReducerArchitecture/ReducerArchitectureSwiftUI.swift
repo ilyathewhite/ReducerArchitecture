@@ -65,6 +65,7 @@ public struct StoreUI<UIWrapper: StoreUIWrapper> {
         UIWrapper.ContentView(store: store)
     }
 
+    @MainActor
     public var value: UIWrapper.Store.ValuePublisher { store.value }
 }
 
