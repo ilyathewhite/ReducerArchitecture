@@ -375,34 +375,3 @@ extension StateStore {
             .eraseToAnyPublisher()
     }
 }
-
-@MainActor
-@propertyWrapper public struct StoreObjectState<Store: AnyStore, Value: AnyObject> {
-    public let key: String
-    public let store: Store
-
-    public var wrappedValue: Value {
-        get {
-            guard let anyValue = store.objectState[key] else {
-                fatalError("no value")
-            }
-            guard let value = anyValue as? Value else {
-                let expected = String(reflecting: Value.self)
-                let actual = String(reflecting: type(of: anyValue))
-                fatalError("wrong type: expected \(expected), got: \(actual)")
-            }
-            return value
-        }
-        set {
-            store.objectState[key] = newValue
-        }
-    }
-
-    public init(key customKey: String? = nil, store: Store, value: @autoclosure () -> Value) {
-        self.key = customKey ?? String(reflecting: Value.self)
-        self.store = store
-        if store.objectState[key] == nil {
-            store.objectState[key] = value()
-        }
-    }
-}
