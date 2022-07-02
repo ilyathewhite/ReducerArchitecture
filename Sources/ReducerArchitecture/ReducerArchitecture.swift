@@ -97,12 +97,10 @@ public struct AsyncResult<T: Equatable>: Equatable {
     private(set) var count = 0
 }
 
-public protocol AnyStore: AnyObject, IdentifiableAsSelf {
+public protocol AnyStore: AnyObject {
     associatedtype PublishedValue
 
     @MainActor var identifier: String { get }
-    @MainActor var objectState: [String: AnyObject] { get set }
-    @MainActor var isConnectedToUI: Bool { get set }
 
     @MainActor var value: AnyPublisher<PublishedValue, Cancel> { get }
     @MainActor func publish(_ value: PublishedValue)

@@ -69,24 +69,19 @@ public struct StoreUI<UIWrapper: StoreUIWrapper> {
     public var value: UIWrapper.Store.ValuePublisher { store.value }
 }
 
-extension StoreUI: Identifiable {
-    public var id: UIWrapper.Store.ID {
-        store.id
-    }
-}
-
 public struct ConnectOnAppear<S: AnyStore>: ViewModifier {
     public let store: S
     public let connect: () -> Void
 
+    @State private var isConnected = false
+
     public func body(content: Content) -> some View {
         content
             .onAppear {
-                guard !store.isConnectedToUI else { return }
-                store.isConnectedToUI = true
+                guard !isConnected else { return }
                 connect()
+                isConnected = true
             }
-            .id(store.id)
     }
 }
 
