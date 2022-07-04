@@ -150,6 +150,7 @@ public struct StateReducer<Environment, Value, MutatingAction, EffectAction, Pub
 }
 
 extension StateReducer where EffectAction == Never {
+    @MainActor
     public init(_ run: @escaping (inout Value, MutatingAction) -> Effect?) {
         self = StateReducer(run: run, effect: { _, _, effectAction in AnyPublisher(Just(.effect(effectAction))) })
     }
