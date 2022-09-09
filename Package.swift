@@ -19,7 +19,13 @@ let package = Package(
     targets: [
         .target(
             name: "ReducerArchitecture",
-            dependencies: ["CombineEx"]
+            dependencies: ["CombineEx"],
+            swiftSettings: [.unsafeFlags([
+                "-Xfrontend",
+                "-warn-long-function-bodies=100",
+                "-Xfrontend",
+                "-warn-long-expression-type-checking=100"
+            ])]
         )
     ]
 )
