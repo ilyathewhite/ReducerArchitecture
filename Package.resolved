@@ -3,7 +3,7 @@
     "pins": [
       {
         "package": "CombineEx",
-        "repositoryURL": "https://github.com/RocketLaunchpad/CombineEx.git",
+        "repositoryURL": "https://github.com/ilyathewhite/CombineEx.git",
         "state": {
           "branch": "main",
           "revision": "4c0a8201655c98542c3c6069ff5ab21260ddbc71",
