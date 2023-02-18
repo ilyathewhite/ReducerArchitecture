@@ -37,7 +37,6 @@ public extension StateStore {
             get: { self.state[keyPath: keyPath] },
             set: { _ in
                 assertionFailure()
-                self.send(.noAction)
             }
         )
     }
@@ -54,23 +53,41 @@ public protocol StoreUIWrapper: StoreNamespace {
     associatedtype ContentView: StoreContentView where ContentView.StoreWrapper == Self
 }
 
-public struct StoreUI<UIWrapper: StoreUIWrapper> {
+public protocol StoreUIContainer<UIWrapper> {
+    associatedtype UIWrapper: StoreUIWrapper
+    var store: UIWrapper.Store { get }
+    init(_ store: UIWrapper.Store)
+}
+
+extension StoreUIContainer {
+    public func makeView() -> some View {
+        UIWrapper.ContentView(store: store)
+    }
+    
+    public func makeAnyView() -> AnyView {
+        AnyView(makeView())
+    }
+
+    @MainActor
+    public var value: UIWrapper.Store.ValuePublisher {
+        store.value
+    }
+    
+    @MainActor
+    public func cancel() {
+        store.cancel()
+    }
+}
+
+public struct StoreUI<UIWrapper: StoreUIWrapper>: StoreUIContainer {
     public let store: UIWrapper.Store
 
     public init(_ store: UIWrapper.Store) {
         self.store = store
     }
-
-    public func makeView() -> UIWrapper.ContentView {
-        UIWrapper.ContentView(store: store)
-    }
-
-    @MainActor
-    public var value: UIWrapper.Store.ValuePublisher { store.value }
 }
 
-public struct ConnectOnAppear<S: AnyStore>: ViewModifier {
-    public let store: S
+public struct ConnectOnAppear: ViewModifier {
     public let connect: () -> Void
 
     @State private var isConnected = false
@@ -86,8 +103,8 @@ public struct ConnectOnAppear<S: AnyStore>: ViewModifier {
 }
 
 public extension View {
-    func connectOnAppear<S: AnyStore>(_ store: S, connect: @escaping () -> Void) -> some View {
-        modifier(ConnectOnAppear(store: store, connect: connect))
+    func connectOnAppear(connect: @escaping () -> Void) -> some View {
+        modifier(ConnectOnAppear(connect: connect))
     }
 }
 

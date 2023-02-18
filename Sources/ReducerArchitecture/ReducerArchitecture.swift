@@ -36,9 +36,11 @@ public protocol StoreNamespace: Namespace {
     associatedtype MutatingAction
     associatedtype EffectAction
     associatedtype PublishedValue
+}
 
-    typealias Store = StateStore<StoreEnvironment, StoreState, MutatingAction, EffectAction, PublishedValue>
-    typealias Reducer = Store.Reducer
+extension StoreNamespace {
+    public typealias Store = StateStore<Self>
+    public typealias Reducer = Store.Reducer
 }
 
 public enum UIValue<T> {
@@ -73,18 +75,6 @@ public enum UIValue<T> {
 
 extension UIValue: Equatable where T: Equatable {}
 
-public enum UIEndValue {
-    case fromUI
-    case fromCode
-
-    public var isFromUI: Bool {
-        switch self {
-        case .fromUI: return true
-        case .fromCode: return false
-        }
-    }
-}
-
 public struct AsyncResult<T: Equatable>: Equatable {
     public var value: T? {
         didSet {
@@ -110,80 +100,80 @@ public protocol AnyStore: AnyObject {
 public enum StateAction<MutatingAction, EffectAction, PublishedValue> {
     case mutating(MutatingAction, animated: Bool = false, Animation? = .default)
     case effect(EffectAction)
-    case noAction
     case publish(PublishedValue)
     case cancel
 }
 
-public typealias StateEffect<MutatingAction, EffectAction, PublishedValue> =
-    AnyPublisher<StateAction<MutatingAction, EffectAction, PublishedValue>, Never>
+public enum StateEffect<MutatingAction, EffectAction, PublishedValue> {
+    public typealias Action = StateAction<MutatingAction, EffectAction, PublishedValue>
+    
+    case action(Action)
+    case actions([Action])
+    case publisher(AnyPublisher<Action, Never>)
+    case asyncAction(() async -> Action?)
+    
+    func asPublisher() -> AnyPublisher<Action, Never> {
+        switch self {
+        case .action(let action):
+            return Just(action).eraseToAnyPublisher()
+        case .actions(let actions):
+            return actions.publisher.eraseToAnyPublisher()
+        case .publisher(let publisher):
+            return publisher.eraseToAnyPublisher()
+        case .asyncAction(let eval):
+            return makePublisher(eval).compactMap { $0 }.eraseToAnyPublisher()
+        }
+    }
+}
 
-public struct StateReducer<Environment, Value, MutatingAction, EffectAction, PublishedValue> {
+public struct StateReducer<Nsp: StoreNamespace> {
+    public typealias PublishedValue = Nsp.PublishedValue
+    public typealias MutatingAction = Nsp.MutatingAction
+    public typealias EffectAction = Nsp.EffectAction
+    public typealias Environment = Nsp.StoreEnvironment
+    public typealias Value = Nsp.StoreState
+    
     public typealias Action = StateAction<MutatingAction, EffectAction, PublishedValue>
     public typealias Effect = StateEffect<MutatingAction, EffectAction, PublishedValue>
 
-    public typealias MutatingAction = MutatingAction
-
     let run: (inout Value, MutatingAction) -> Effect?
-    let effect: (Environment, Value, EffectAction) -> Effect
+    let effect: (Environment, Value, EffectAction) -> Effect?
 
-    public init(run: @escaping (inout Value, MutatingAction) -> Effect?, effect: @escaping (Environment, Value, EffectAction) -> Effect) {
+    public init(run: @escaping (inout Value, MutatingAction) -> Effect?, effect: @escaping (Environment, Value, EffectAction) -> Effect?) {
         self.run = run
         self.effect = effect
-    }
-
-    public static func effect(_ body: @escaping () -> Action) -> Effect {
-        Just(body()).eraseToAnyPublisher()
-    }
-
-    public static func effect(_ action: Action) -> Effect {
-        Just(action).eraseToAnyPublisher()
-    }
-
-    public static func effect(_ action: MutatingAction) -> Effect {
-        effect(.mutating(action))
-    }
-
-    public static func effect(_ action: EffectAction) -> Effect {
-        effect(.effect(action))
     }
 }
 
 extension StateReducer where EffectAction == Never {
     @MainActor
     public init(_ run: @escaping (inout Value, MutatingAction) -> Effect?) {
-        self = StateReducer(run: run, effect: { _, _, effectAction in AnyPublisher(Just(.effect(effectAction))) })
+        self = StateReducer(run: run, effect: { _, _, effectAction in nil })
     }
 }
 
 // StateStore should not be subclassed because of a bug in SwiftUI
 @MainActor
-public final class StateStore<Environment, State, MutatingAction, EffectAction, PublishedValue>: ObservableObject, AnyStore {
-    public typealias Reducer = StateReducer<Environment, State, MutatingAction, EffectAction, PublishedValue>
+public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
+    public typealias Nsp = Nsp
+    public typealias PublishedValue = Nsp.PublishedValue
+    public typealias MutatingAction = Nsp.MutatingAction
+    public typealias EffectAction = Nsp.EffectAction
+    public typealias Environment = Nsp.StoreEnvironment
+    public typealias State = Nsp.StoreState
+    
+    public typealias Reducer = StateReducer<Nsp>
     public typealias ValuePublisher = AnyPublisher<PublishedValue, Cancel>
 
     public var identifier: String
 
-    public var environment: Environment? {
-        didSet {
-            envSource.send(environment)
-        }
-    }
-    private var envSource: CurrentValueSubject<Environment?, Never> = .init(nil)
-    private func getEnv() -> AnySingleValuePublisher<Environment, Never> {
-        envSource.compactMap { $0 }.first().eraseType()
-    }
-
+    public var environment: Environment?
     private let reducer: Reducer
     private var subscriptions = Set<AnyCancellable>()
     private var effects = PassthroughSubject<Reducer.Effect, Never>()
 
     @Published public private(set) var state: State
     private var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
-
-    private var sentActions = PassthroughSubject<Reducer.Action, Never>()
-    public var sentMutatingActions: AnyPublisher<MutatingAction, Never>
-    public var logActions = false
 
     public var objectState: [String: AnyObject] = [:]
     public var isConnectedToUI = false
@@ -194,28 +184,11 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
         self.state = initialValue
         self.environment = env
 
-        sentMutatingActions = sentActions
-            .compactMap { anyAction in
-                switch anyAction {
-                case .mutating(let action, _, _):
-                    return action
-                default:
-                    return nil
-                }
-            }
-            .eraseToAnyPublisher()
-
         effects
-            .flatMap { $0 }
+            .flatMap { $0.asPublisher() }
             .receive(on: DispatchQueue.main)
-            // sink could use unowned self, but .receive(on:) has a bug where
-            // it sends a buffered value after the stream was cancelled.
-            // Using weak self is a workaround.
-            // TODO: [maybe] reevaluate after fixing memory leaks
             .sink(receiveValue: { [weak self] in self?.send($0) })
             .store(in: &subscriptions)
-
-        envSource.send(environment)
     }
 
     public convenience init(_ identifier: String, _ initialValue: State, reducer: Reducer)
@@ -225,7 +198,6 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
 
     public convenience init(_ identifier: String, _ initialValue: State, reducer: Reducer) where Environment == Void {
         self.init(identifier, initialValue, reducer: reducer, env: ())
-        envSource.send(())
     }
 
     public func addEffect(_ effect: Reducer.Effect) {
@@ -233,16 +205,6 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
     }
 
     public func send(_ action: Reducer.Action) {
-        if logActions {
-            let appNamePrefix = ReducerArchitecture.env.appNamePrefix
-            let actionDescr = "\(action)"
-                .replacingOccurrences(of: appNamePrefix, with: "")
-                .replacingOccurrences(of: "\(identifier).", with: "")
-                .replacingOccurrences(of: "MutatingAction.", with: "")
-                .replacingOccurrences(of: "EffectAction.", with: "")
-            ReducerArchitecture.env.log("\(identifier): \(actionDescr)")
-        }
-
         let effect: Reducer.Effect?
         switch action {
         case .mutating(let mutatingAction, let animate, let animation):
@@ -253,9 +215,12 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
                 effect = reducer.run(&state, mutatingAction)
             }
         case .effect(let effectAction):
-            effect = getEnv().flatMap { self.reducer.effect($0, self.state, effectAction) }.eraseToAnyPublisher()
-        case .noAction:
-            effect = nil
+            guard let env = environment else {
+                assertionFailure()
+                return
+            }
+            effect = reducer.effect(env, state, effectAction)
+
         case .publish(let value):
             publishedValue.send(value)
             effect = nil
@@ -267,8 +232,6 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
         if let e = effect {
             addEffect(e)
         }
-
-        sentActions.send(action)
     }
 
     public func updates<Value>(
@@ -298,34 +261,38 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
         distinctValues(on: keyPath, compare: ==)
     }
 
-    public func bind<OtherEnvironment, OtherState, OtherValue, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>(
-        to otherStore: StateStore<OtherEnvironment, OtherState, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>,
-        on keyPath: KeyPath<OtherState, OtherValue>,
-        with action: @escaping (OtherValue) -> Reducer.Action,
+    public func bind<OtherNsp: StoreNamespace, OtherValue>(
+        to otherStore: OtherNsp.Store,
+        on keyPath: KeyPath<OtherNsp.StoreState, OtherValue>,
+        with action: @escaping (OtherValue) -> Reducer.Action?,
         compare: @escaping (OtherValue, OtherValue) -> Bool
     ) {
         addEffect(
-            otherStore
+            .publisher(
+                otherStore
                 .distinctValues(on: keyPath, compare: compare)
-                .map { action($0) }
+                .compactMap { action($0) }
                 .eraseToAnyPublisher()
+            )
         )
     }
 
-    public func bind<OtherEnvironment, OtherState, OtherValue: Equatable, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>(
-        to otherStore: StateStore<OtherEnvironment, OtherState, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>,
-        on keyPath: KeyPath<OtherState, OtherValue>,
-        with action: @escaping (OtherValue) -> Reducer.Action) {
+    public func bind<OtherNsp: StoreNamespace, OtherValue: Equatable>(
+        to otherStore: OtherNsp.Store,
+        on keyPath: KeyPath<OtherNsp.StoreState, OtherValue>,
+        with action: @escaping (OtherValue) -> Reducer.Action?) {
         bind(to: otherStore, on: keyPath, with: action, compare: ==)
     }
 
-    public func bindPublishedValue<OtherEnvironment, OtherState, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>(
-        of otherStore: StateStore<OtherEnvironment, OtherState, OtherMutatingAction, OtherEffectAction, OtherPublishedValue>,
-        with action: @escaping (OtherPublishedValue) -> Reducer.Action) {
+    public func bindPublishedValue<OtherNsp: StoreNamespace>(
+        of otherStore: OtherNsp.Store,
+        with action: @escaping (OtherNsp.PublishedValue) -> Reducer.Action) {
             addEffect(
-                otherStore.publishedValue.map { action($0) }
-                    .catch { _ in Reducer.effect(.cancel) }
-                    .eraseToAnyPublisher()
+                .publisher(
+                    otherStore.publishedValue.map { action($0) }
+                        .catch { _ in Just(.cancel) }
+                        .eraseToAnyPublisher()
+                )
             )
     }
 
@@ -366,11 +333,13 @@ public final class StateStore<Environment, State, MutatingAction, EffectAction, 
 
 extension StateStore {
     public func pausedTyping(for time: TimeInterval = 0.5, keyPath: KeyPath<State, String>, action: MutatingAction) -> Reducer.Effect {
-        updates(on: keyPath)
-            .debounce(for: .init(time), scheduler: RunLoop.main)
-            .map { _ in
-                .mutating(action)
-            }
-            .eraseToAnyPublisher()
+        .publisher(
+            updates(on: keyPath)
+                .debounce(for: .init(time), scheduler: RunLoop.main)
+                .map { _ in
+                        .mutating(action)
+                }
+                .eraseToAnyPublisher()
+        )
     }
 }
