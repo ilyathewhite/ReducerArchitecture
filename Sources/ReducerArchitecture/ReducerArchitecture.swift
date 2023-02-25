@@ -97,15 +97,15 @@ public protocol AnyStore: AnyObject {
     @MainActor func cancel()
 }
 
-public enum StateAction<MutatingAction, EffectAction, PublishedValue> {
-    case mutating(MutatingAction, animated: Bool = false, Animation? = .default)
-    case effect(EffectAction)
-    case publish(PublishedValue)
+public enum StateAction<Nsp: StoreNamespace> {
+    case mutating(Nsp.MutatingAction, animated: Bool = false, Animation? = .default)
+    case effect(Nsp.EffectAction)
+    case publish(Nsp.PublishedValue)
     case cancel
 }
 
-public enum StateEffect<MutatingAction, EffectAction, PublishedValue> {
-    public typealias Action = StateAction<MutatingAction, EffectAction, PublishedValue>
+public enum StateEffect<Nsp: StoreNamespace> {
+    public typealias Action = StateAction<Nsp>
     
     case action(Action)
     case actions([Action])
@@ -133,8 +133,8 @@ public struct StateReducer<Nsp: StoreNamespace> {
     public typealias Environment = Nsp.StoreEnvironment
     public typealias Value = Nsp.StoreState
     
-    public typealias Action = StateAction<MutatingAction, EffectAction, PublishedValue>
-    public typealias Effect = StateEffect<MutatingAction, EffectAction, PublishedValue>
+    public typealias Action = StateAction<Nsp>
+    public typealias Effect = StateEffect<Nsp>
 
     let run: (inout Value, MutatingAction) -> Effect?
     let effect: (Environment, Value, EffectAction) -> Effect?
@@ -328,18 +328,5 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
 
     public func cancel() {
         send(.cancel)
-    }
-}
-
-extension StateStore {
-    public func pausedTyping(for time: TimeInterval = 0.5, keyPath: KeyPath<State, String>, action: MutatingAction) -> Reducer.Effect {
-        .publisher(
-            updates(on: keyPath)
-                .debounce(for: .init(time), scheduler: RunLoop.main)
-                .map { _ in
-                        .mutating(action)
-                }
-                .eraseToAnyPublisher()
-        )
     }
 }
