@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "ReducerArchitecture",
     platforms: [
-        .macOS(.v11), .iOS(.v14), .tvOS(.v14)
+        .macOS(.v11), .iOS("15.0"), .tvOS(.v14)
     ],
     products: [
         .library(

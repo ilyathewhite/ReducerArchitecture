@@ -109,21 +109,9 @@ public enum StateEffect<Nsp: StoreNamespace> {
     
     case action(Action)
     case actions([Action])
+    case asyncAction(() async throws -> Action?)
+    case asyncActions(() -> AsyncStream<Action>)
     case publisher(AnyPublisher<Action, Never>)
-    case asyncAction(() async -> Action?)
-    
-    func asPublisher() -> AnyPublisher<Action, Never> {
-        switch self {
-        case .action(let action):
-            return Just(action).eraseToAnyPublisher()
-        case .actions(let actions):
-            return actions.publisher.eraseToAnyPublisher()
-        case .publisher(let publisher):
-            return publisher.eraseToAnyPublisher()
-        case .asyncAction(let eval):
-            return makePublisher(eval).compactMap { $0 }.eraseToAnyPublisher()
-        }
-    }
 }
 
 public struct StateReducer<Nsp: StoreNamespace> {
@@ -152,6 +140,56 @@ extension StateReducer where EffectAction == Never {
     }
 }
 
+private actor TasksContainer {
+    private typealias ActionTask = Task<Void, any Error>
+
+    private enum TaskBox {
+        case willStart
+        case inProgress(ActionTask)
+        
+        func cancelTask() {
+            switch self {
+            case .inProgress(let task):
+                task.cancel()
+            default:
+                return
+            }
+        }
+    }
+
+    private var tasks: [UUID: TaskBox] = [:]
+    
+    deinit {
+        for (_, box) in tasks {
+            box.cancelTask()
+        }
+        tasks.removeAll()
+    }
+    
+    func removeTask(id: UUID) {
+        tasks.removeValue(forKey: id)
+    }
+    
+    func addTask(_ f: @escaping () async throws -> Void) {
+        let id = UUID()
+        tasks[id] = .willStart
+        let task = Task { [weak self] in
+            do {
+                try await f()
+                await self?.removeTask(id: id)
+            }
+            catch {
+                await self?.removeTask(id: id)
+                throw error
+            }
+        }
+        
+        if (self.tasks[id] != nil) && !task.isCancelled {
+            self.tasks[id] = .inProgress(task)
+        }
+    }
+}
+
 // StateStore should not be subclassed because of a bug in SwiftUI
 @MainActor
 public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
@@ -169,28 +207,18 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
 
     public var environment: Environment?
     private let reducer: Reducer
-    private var subscriptions = Set<AnyCancellable>()
-    private var effects = PassthroughSubject<Reducer.Effect, Never>()
-
+    private let tasksContainer = TasksContainer()
+    
     @Published public private(set) var state: State
     private var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
-
-    public var objectState: [String: AnyObject] = [:]
-    public var isConnectedToUI = false
 
     public init(_ identifier: String, _ initialValue: State, reducer: Reducer, env: Environment?) {
         self.identifier = identifier
         self.reducer = reducer
         self.state = initialValue
         self.environment = env
-
-        effects
-            .flatMap { $0.asPublisher() }
-            .receive(on: DispatchQueue.main)
-            .sink(receiveValue: { [weak self] in self?.send($0) })
-            .store(in: &subscriptions)
     }
-
+    
     public convenience init(_ identifier: String, _ initialValue: State, reducer: Reducer)
     where Environment == Never, EffectAction == Never {
         self.init(identifier, initialValue, reducer: reducer, env: nil)
@@ -201,7 +229,45 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
     }
 
     public func addEffect(_ effect: Reducer.Effect) {
-        effects.send(effect)
+        switch effect {
+        case .action(let action):
+            send(action)
+            
+        case .actions(let actions):
+            for action in actions {
+                send(action)
+            }
+            
+        case .asyncAction(let f):
+            Task {
+                await tasksContainer.addTask { [weak self] in
+                    if let action = try await f() {
+                        self?.send(action)
+                    }
+                }
+            }
+            
+        case .asyncActions(let f):
+            let actions = f()
+            Task {
+                await tasksContainer.addTask { [weak self] in
+                    for await action in actions {
+                        try Task.checkCancellation()
+                        self?.send(action)
+                    }
+                }
+            }
+            
+        case .publisher(let publisher):
+            Task {
+                await tasksContainer.addTask { [weak self] in
+                    for await action in publisher.values {
+                        try Task.checkCancellation()
+                        self?.send(action)
+                    }
+                }
+            }
+        }
     }
 
     public func send(_ action: Reducer.Action) {
