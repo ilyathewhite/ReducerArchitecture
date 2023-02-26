@@ -110,7 +110,8 @@ public enum StateEffect<Nsp: StoreNamespace> {
     case action(Action)
     case actions([Action])
     case asyncAction(() async throws -> Action?)
-    case asyncActions(() -> AsyncStream<Action>)
+    case asyncActions(() async throws -> [Action])
+    case asyncActionSequence(() -> AsyncStream<Action>)
     case publisher(AnyPublisher<Action, Never>)
 }
 
@@ -248,6 +249,16 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             }
             
         case .asyncActions(let f):
+            Task {
+                await tasksContainer.addTask { [weak self] in
+                    let actions = try await f()
+                    for action in actions {
+                        self?.send(action)
+                    }
+                }
+            }
+            
+        case .asyncActionSequence(let f):
             let actions = f()
             Task {
                 await tasksContainer.addTask { [weak self] in
