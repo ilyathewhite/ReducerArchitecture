@@ -113,6 +113,7 @@ public enum StateEffect<Nsp: StoreNamespace> {
     case asyncActions(() async throws -> [Action])
     case asyncActionSequence(() -> AsyncStream<Action>)
     case publisher(AnyPublisher<Action, Never>)
+    case none // cannot use Effect? in Reducer because it breaks the compiler
 }
 
 public struct StateReducer<Nsp: StoreNamespace> {
@@ -125,10 +126,10 @@ public struct StateReducer<Nsp: StoreNamespace> {
     public typealias Action = StateAction<Nsp>
     public typealias Effect = StateEffect<Nsp>
 
-    let run: (inout Value, MutatingAction) -> Effect?
-    let effect: (Environment, Value, EffectAction) -> Effect?
+    let run: (inout Value, MutatingAction) -> Effect
+    let effect: (Environment, Value, EffectAction) -> Effect
 
-    public init(run: @escaping (inout Value, MutatingAction) -> Effect?, effect: @escaping (Environment, Value, EffectAction) -> Effect?) {
+    public init(run: @escaping (inout Value, MutatingAction) -> Effect, effect: @escaping (Environment, Value, EffectAction) -> Effect) {
         self.run = run
         self.effect = effect
     }
@@ -136,8 +137,8 @@ public struct StateReducer<Nsp: StoreNamespace> {
 
 extension StateReducer where EffectAction == Never {
     @MainActor
-    public init(_ run: @escaping (inout Value, MutatingAction) -> Effect?) {
-        self = StateReducer(run: run, effect: { _, _, effectAction in nil })
+    public init(_ run: @escaping (inout Value, MutatingAction) -> Effect) {
+        self = StateReducer(run: run, effect: { _, _, effectAction in .none })
     }
 }
 
@@ -278,6 +279,9 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                     }
                 }
             }
+            
+        case .none:
+            break
         }
     }
 
