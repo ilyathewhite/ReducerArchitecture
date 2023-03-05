@@ -41,6 +41,11 @@ public protocol StoreNamespace: Namespace {
 extension StoreNamespace {
     public typealias Store = StateStore<Self>
     public typealias Reducer = Store.Reducer
+    
+    @MainActor
+    public static func reducer() -> Reducer where MutatingAction == Void, EffectAction == Never {
+        .init { _, _ in .none }
+    }
 }
 
 public enum UIValue<T> {
