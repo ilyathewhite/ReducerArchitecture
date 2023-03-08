@@ -19,6 +19,7 @@ public func withAnimation<Result>(_ animation: Animation? = nil, _ body: () thro
 import Foundation
 import Combine
 import CombineEx
+import os
 
 public protocol Namespace {
     static var identifier: String { get }
@@ -103,7 +104,7 @@ public protocol AnyStore: AnyObject {
 }
 
 public enum StateAction<Nsp: StoreNamespace> {
-    case mutating(Nsp.MutatingAction, animated: Bool = false, Animation? = .default)
+    case mutating(Nsp.MutatingAction, animated: Bool = false, Animation? = nil)
     case effect(Nsp.EffectAction)
     case publish(Nsp.PublishedValue)
     case cancel
@@ -215,6 +216,59 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
     public var environment: Environment?
     private let reducer: Reducer
     private let tasksContainer = TasksContainer()
+
+    public var logConfig = LogConfig()
+    private var logger: Logger
+    private var codeStringSnapshots: [SnapshotData] = []
+    
+    private func clearSnapshots() {
+        codeStringSnapshots = []
+    }
+
+    @MainActor
+    public func saveSnapshotsIfNeeded() {
+        guard logConfig.saveSnapshots else { return }
+        do {
+            let fileManager = FileManager.default
+            let rootFolderURL = try fileManager.url(
+                for: .cachesDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: false
+            )
+
+            let logFolderURL = rootFolderURL.appendingPathComponent("ReducerLogs")
+            if !fileManager.fileExists(atPath: logFolderURL.relativePath) {
+                try fileManager.createDirectory(
+                    at: logFolderURL,
+                    withIntermediateDirectories: false,
+                    attributes: nil
+                )
+            }
+            
+            Task.detached(priority: .userInitiated) { [identifier, codeStringSnapshots, logger] in
+                do {
+                    let logURL = logFolderURL.appendingPathComponent("\(identifier)", conformingTo: .json)
+                    let encoder = JSONEncoder()
+                    let data = try encoder.encode(codeStringSnapshots)
+                    
+                    if FileManager.default.createFile(atPath: logURL.relativePath, contents: data) {
+                        logger.info("Saved reducer snapshots to \n\(logURL.relativePath)")
+                        await self.clearSnapshots()
+                    }
+                    else {
+                        logger.error("Failed to save snapshots.")
+                    }
+                }
+                catch {
+                    logger.error(message: "Failed to saved snapshots.", error)
+                }
+            }            
+        }
+        catch {
+            logger.error(message: "Failed to saved snapshots.", error)
+        }
+    }
     
     @Published public private(set) var state: State
     private var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
@@ -224,6 +278,8 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         self.reducer = reducer
         self.state = initialValue
         self.environment = env
+        
+        logger = Logger(subsystem: "ReducerStore", category: identifier)
     }
     
     public convenience init(_ identifier: String, _ initialValue: State, reducer: Reducer)
@@ -291,15 +347,30 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
     }
 
     public func send(_ action: Reducer.Action) {
+        var reducerInput = "\nreducer input:"
+        if logConfig.logState {
+            reducerInput.append("\n\n\(codeString(action))")
+        }
+        if logConfig.logActons {
+            reducerInput.append("\n\n\(codeString(state))")
+        }
+        if logConfig.logEnabled {
+            reducerInput.append("\n\n")
+            logger.debug("\(reducerInput)")
+        }
+        
+        let savedInputState: State? = logConfig.saveSnapshots ? state : nil
+
         let effect: Reducer.Effect?
         switch action {
         case .mutating(let mutatingAction, let animate, let animation):
             if animate {
-                effect = withAnimation(animation) { reducer.run(&state, mutatingAction) }
+                effect = withAnimation(animation ?? .default) { reducer.run(&state, mutatingAction) }
             }
             else {
                 effect = reducer.run(&state, mutatingAction)
             }
+            
         case .effect(let effectAction):
             guard let env = environment else {
                 assertionFailure()
@@ -310,11 +381,35 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         case .publish(let value):
             publishedValue.send(value)
             effect = nil
+            
         case .cancel:
             publishedValue.send(completion: .failure(.cancel))
             effect = nil
         }
 
+        var reducerOutput = "\nreducer output:"
+        if logConfig.logActons {
+            reducerOutput.append("\n\n\(codeString(state))")
+        }
+        if logConfig.logState {
+            reducerOutput.append("\n\n\(codeString(effect))")
+        }
+        if logConfig.logEnabled {
+            reducerOutput.append("\n\n")
+            logger.debug("\(reducerOutput)")
+        }
+        
+        if logConfig.saveSnapshots, let savedInputState {
+            let snapshot = Snapshot(
+                timestamp: Date(),
+                action: action,
+                inputState: savedInputState,
+                outputState: state,
+                effect: effect
+            )
+            codeStringSnapshots.append(snapshot.codeStringData())
+        }
+        
         if let e = effect {
             addEffect(e)
         }
@@ -414,5 +509,43 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
 
     public func cancel() {
         send(.cancel)
+    }
+    
+    // Mark: - Logging
+    
+    public struct LogConfig {
+        public var logState = false
+        public var logActons = false
+        public var saveSnapshots = false
+        
+        var logEnabled: Bool {
+            logState || logActons
+        }
+    }
+    
+    public struct Snapshot {
+        public let timestamp: Date
+        public let action: Reducer.Action
+        public let inputState: State
+        public let outputState: State
+        public let effect: Reducer.Effect?
+        
+        public func codeStringData() -> SnapshotData {
+            .init(
+                timestamp: timestamp,
+                action: codeString(action),
+                inputState: propertyCodeStrings(inputState),
+                outputState: propertyCodeStrings(outputState),
+                effect: codeString(effect)
+            )
+        }
+    }
+    
+    public struct SnapshotData: Codable {
+        public let timestamp: Date
+        public let action: String
+        public let inputState: [String: String]
+        public let outputState: [String: String]
+        public let effect: String
     }
 }
