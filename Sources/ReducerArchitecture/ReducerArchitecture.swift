@@ -219,7 +219,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
 
     public var logConfig = LogConfig()
     private var logger: Logger
-    private var codeStringSnapshots: [SnapshotData] = []
+    private var codeStringSnapshots: [ReducerSnapshotData] = []
     
     private func clearSnapshots() {
         codeStringSnapshots = []
@@ -530,7 +530,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         public let outputState: State
         public let effect: Reducer.Effect?
         
-        public func codeStringData() -> SnapshotData {
+        public func codeStringData() -> ReducerSnapshotData {
             .init(
                 timestamp: timestamp,
                 action: codeString(action),
@@ -540,12 +540,12 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             )
         }
     }
-    
-    public struct SnapshotData: Codable {
-        public let timestamp: Date
-        public let action: String
-        public let inputState: [String: String]
-        public let outputState: [String: String]
-        public let effect: String
-    }
+}
+
+public struct ReducerSnapshotData: Codable {
+    public let timestamp: Date
+    public let action: String
+    public let inputState: [String: String]
+    public let outputState: [String: String]
+    public let effect: String
 }
