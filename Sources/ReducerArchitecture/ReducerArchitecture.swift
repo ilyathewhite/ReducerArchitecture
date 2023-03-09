@@ -545,7 +545,15 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
 public struct ReducerSnapshotData: Codable {
     public let timestamp: Date
     public let action: String
-    public let inputState: [String: String]
-    public let outputState: [String: String]
+    public let inputState: [CodePropertyValuePair]
+    public let outputState: [CodePropertyValuePair]
     public let effect: String
+    
+    public init(timestamp: Date, action: String, inputState: [CodePropertyValuePair], outputState: [CodePropertyValuePair], effect: String) {
+        self.timestamp = timestamp
+        self.action = action
+        self.inputState = inputState
+        self.outputState = outputState
+        self.effect = effect
+    }
 }
