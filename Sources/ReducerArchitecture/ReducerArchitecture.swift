@@ -246,11 +246,12 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                 )
             }
             
-            Task.detached(priority: .userInitiated) { [identifier, codeStringSnapshots, logger] in
+            let snapshotCollection = ReducerSnapshotCollection(title: identifier, snapshots: codeStringSnapshots)
+            Task.detached(priority: .userInitiated) { [logger] in
                 do {
-                    let logURL = logFolderURL.appendingPathComponent("\(identifier)", conformingTo: .json)
+                    let logURL = logFolderURL.appendingPathComponent("\(snapshotCollection.title)", conformingTo: .json)
                     let encoder = JSONEncoder()
-                    let data = try encoder.encode(codeStringSnapshots)
+                    let data = try encoder.encode(snapshotCollection)
                     
                     if FileManager.default.createFile(atPath: logURL.relativePath, contents: data) {
                         logger.info("Saved reducer snapshots to \n\(logURL.relativePath)")
@@ -556,4 +557,9 @@ public struct ReducerSnapshotData: Codable {
         self.outputState = outputState
         self.effect = effect
     }
+}
+
+public struct ReducerSnapshotCollection: Codable {
+    public let title: String
+    public let snapshots: [ReducerSnapshotData]
 }
