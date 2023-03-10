@@ -348,10 +348,10 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
 
     public func send(_ action: Reducer.Action) {
         var reducerInput = "\nreducer input:"
-        if logConfig.logState {
+        if logConfig.logActions {
             reducerInput.append("\n\n\(codeString(action))")
         }
-        if logConfig.logActons {
+        if logConfig.logState {
             reducerInput.append("\n\n\(codeString(state))")
         }
         if logConfig.logEnabled {
@@ -388,10 +388,10 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         }
 
         var reducerOutput = "\nreducer output:"
-        if logConfig.logActons {
+        if logConfig.logState {
             reducerOutput.append("\n\n\(codeString(state))")
         }
-        if logConfig.logState {
+        if logConfig.logActions {
             reducerOutput.append("\n\n\(codeString(effect))")
         }
         if logConfig.logEnabled {
@@ -515,11 +515,11 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
     
     public struct LogConfig {
         public var logState = false
-        public var logActons = false
+        public var logActions = false
         public var saveSnapshots = false
         
         var logEnabled: Bool {
-            logState || logActons
+            logState || logActions
         }
     }
     
