@@ -120,6 +120,25 @@ public enum StateEffect<Nsp: StoreNamespace> {
     case asyncActionSequence(() -> AsyncStream<Action>)
     case publisher(AnyPublisher<Action, Never>)
     case none // cannot use Effect? in Reducer because it breaks the compiler
+    
+    init(_ e: SyncStateEffect<Nsp>) {
+        switch e {
+        case .action(let value):
+            self = .action(value)
+        case .actions(let value):
+            self = .actions(value)
+        case .none:
+            self = .none
+        }
+    }
+}
+
+public enum SyncStateEffect<Nsp: StoreNamespace> {
+    public typealias Action = StateAction<Nsp>
+
+    case action(Action)
+    case actions([Action])
+    case none // cannot use Effect? in Reducer because it breaks the compiler
 }
 
 public struct StateReducer<Nsp: StoreNamespace> {
@@ -131,11 +150,12 @@ public struct StateReducer<Nsp: StoreNamespace> {
     
     public typealias Action = StateAction<Nsp>
     public typealias Effect = StateEffect<Nsp>
+    public typealias SyncEffect = SyncStateEffect<Nsp>
 
-    let run: (inout Value, MutatingAction) -> Effect
+    let run: (inout Value, MutatingAction) -> SyncEffect
     let effect: (Environment, Value, EffectAction) -> Effect
 
-    public init(run: @escaping (inout Value, MutatingAction) -> Effect, effect: @escaping (Environment, Value, EffectAction) -> Effect) {
+    public init(run: @escaping (inout Value, MutatingAction) -> SyncEffect, effect: @escaping (Environment, Value, EffectAction) -> Effect) {
         self.run = run
         self.effect = effect
     }
@@ -143,7 +163,7 @@ public struct StateReducer<Nsp: StoreNamespace> {
 
 extension StateReducer where EffectAction == Never {
     @MainActor
-    public init(_ run: @escaping (inout Value, MutatingAction) -> Effect) {
+    public init(_ run: @escaping (inout Value, MutatingAction) -> SyncEffect) {
         self = StateReducer(run: run, effect: { _, _, effectAction in .none })
     }
 }
@@ -366,10 +386,10 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         switch action {
         case .mutating(let mutatingAction, let animate, let animation):
             if animate {
-                effect = withAnimation(animation ?? .default) { reducer.run(&state, mutatingAction) }
+                effect = .init(withAnimation(animation ?? .default) { reducer.run(&state, mutatingAction) })
             }
             else {
-                effect = reducer.run(&state, mutatingAction)
+                effect = .init(reducer.run(&state, mutatingAction))
             }
             
         case .effect(let effectAction):
