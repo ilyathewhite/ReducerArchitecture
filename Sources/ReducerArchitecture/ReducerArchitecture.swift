@@ -232,6 +232,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
     public typealias ValuePublisher = AnyPublisher<PublishedValue, Cancel>
 
     public var identifier: String
+    private var nestedLevel = 0
 
     public var environment: Environment?
     private let reducer: Reducer
@@ -380,8 +381,11 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             logger.debug("\(reducerInput)")
         }
         
-        let savedInputState: State? = logConfig.saveSnapshots ? state : nil
-
+        if logConfig.saveSnapshots {
+            let snapshot = Snapshot.input(.now, action, state, nestedLevel: nestedLevel)
+            codeStringSnapshots.append(snapshot.logData())
+        }
+        
         let effect: Reducer.Effect?
         switch action {
         case .mutating(let mutatingAction, let animate, let animation):
@@ -392,12 +396,31 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                 effect = .init(reducer.run(&state, mutatingAction))
             }
             
+            var reducerStateChange = "\nreducer state change:"
+            if logConfig.logState {
+                reducerStateChange.append("\n\n\(codeString(state))")
+            }
+            if logConfig.logEnabled {
+                reducerStateChange.append("\n\n")
+                logger.debug("\(reducerStateChange)")
+            }
+
+            if logConfig.saveSnapshots {
+                let snapshot = Snapshot.stateChange(.now, state, nestedLevel: nestedLevel)
+                codeStringSnapshots.append(snapshot.logData())
+            }
+            
         case .effect(let effectAction):
             guard let env = environment else {
                 assertionFailure()
                 return
             }
+
+            // When executing an effect, the environment may send more messages to the store while
+            // inside this call
+            nestedLevel += 1
             effect = reducer.effect(env, state, effectAction)
+            nestedLevel -= 1
 
         case .publish(let value):
             publishedValue.send(value)
@@ -409,9 +432,6 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         }
 
         var reducerOutput = "\nreducer output:"
-        if logConfig.logState {
-            reducerOutput.append("\n\n\(codeString(state))")
-        }
         if logConfig.logActions {
             reducerOutput.append("\n\n\(codeString(effect))")
         }
@@ -420,17 +440,11 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             logger.debug("\(reducerOutput)")
         }
         
-        if logConfig.saveSnapshots, let savedInputState {
-            let snapshot = Snapshot(
-                timestamp: Date(),
-                action: action,
-                inputState: savedInputState,
-                outputState: state,
-                effect: effect
-            )
-            codeStringSnapshots.append(snapshot.codeStringData())
+        if logConfig.saveSnapshots {
+            let snapshot = Snapshot.output(.now, effect, state, nestedLevel: nestedLevel)
+            codeStringSnapshots.append(snapshot.logData())
         }
-        
+
         if let e = effect {
             addEffect(e)
         }
@@ -543,40 +557,56 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             logState || logActions
         }
     }
-    
-    public struct Snapshot {
-        public let timestamp: Date
-        public let action: Reducer.Action
-        public let inputState: State
-        public let outputState: State
-        public let effect: Reducer.Effect?
         
-        public func codeStringData() -> ReducerSnapshotData {
-            .init(
-                timestamp: timestamp,
-                action: codeString(action),
-                inputState: propertyCodeStrings(inputState),
-                outputState: propertyCodeStrings(outputState),
-                effect: codeString(effect)
-            )
+    public enum Snapshot {
+        case input(Date, Reducer.Action, State, nestedLevel: Int)
+        case stateChange(Date, State, nestedLevel: Int)
+        case output(Date, Reducer.Effect?, State, nestedLevel: Int)
+        
+        static func encoded<T>(_ value: T) -> Data? {
+            guard let codable = value as? Codable else { return nil }
+            let encoder = JSONEncoder()
+            return try? encoder.encode(codable)
+        }
+        
+        public func logData() -> ReducerSnapshotData {
+            switch self {
+            case let .input(date, action, state, nestedLevel):
+                return .input(
+                    date,
+                    action: codeString(action),
+                    encodedAction: Self.encoded(action),
+                    state: propertyCodeStrings(state),
+                    encodedState: Self.encoded(state),
+                    nestedLevel: nestedLevel
+                )
+                
+            case let .stateChange(date, state, nestedLevel: nestedLevel):
+                return .stateChange(
+                    date,
+                    state: propertyCodeStrings(state),
+                    encodedState: Self.encoded(state),
+                    nestedLevel: nestedLevel
+                )
+                
+            case let .output(date, effect, state, nestedLevel: nestedLevel):
+                return .output(
+                    date,
+                    effect: codeString(effect),
+                    encodedEffect: effect.flatMap { Self.encoded($0) } ,
+                    state: propertyCodeStrings(state),
+                    encodedState: Self.encoded(state),
+                    nestedLevel: nestedLevel
+                )
+            }
         }
     }
 }
 
-public struct ReducerSnapshotData: Codable {
-    public let timestamp: Date
-    public let action: String
-    public let inputState: [CodePropertyValuePair]
-    public let outputState: [CodePropertyValuePair]
-    public let effect: String
-    
-    public init(timestamp: Date, action: String, inputState: [CodePropertyValuePair], outputState: [CodePropertyValuePair], effect: String) {
-        self.timestamp = timestamp
-        self.action = action
-        self.inputState = inputState
-        self.outputState = outputState
-        self.effect = effect
-    }
+public enum ReducerSnapshotData: Codable {
+    case input(Date, action: String, encodedAction: Data?, state: [CodePropertyValuePair], encodedState: Data?, nestedLevel: Int)
+    case stateChange(Date, state: [CodePropertyValuePair], encodedState: Data?, nestedLevel: Int)
+    case output(Date, effect: String, encodedEffect: Data?, state: [CodePropertyValuePair], encodedState: Data?, nestedLevel: Int)
 }
 
 public struct ReducerSnapshotCollection: Codable {
