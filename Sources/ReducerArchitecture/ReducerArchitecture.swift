@@ -110,6 +110,10 @@ public enum StateAction<Nsp: StoreNamespace> {
     case cancel
 }
 
+extension StateAction: Equatable
+where Nsp.MutatingAction: Equatable, Nsp.EffectAction: Equatable, Nsp.PublishedValue: Equatable {
+}
+
 public enum StateEffect<Nsp: StoreNamespace> {
     public typealias Action = StateAction<Nsp>
     
@@ -129,6 +133,32 @@ public enum StateEffect<Nsp: StoreNamespace> {
             self = .actions(value)
         case .none:
             self = .none
+        }
+    }
+}
+
+extension StateEffect where Action: Equatable {
+    func isEqual(to other: Self) -> Bool? {
+        switch (self, other) {
+        case let (.action(action), .action(otherAction)):
+            return action == otherAction
+        case let (.actions(actions), .actions(otherActions)):
+            return actions == otherActions
+        case (.asyncAction, .asyncAction):
+            return nil
+        case (.asyncActions, .asyncActions):
+            return nil
+        case (.asyncActionSequence, .asyncActionSequence):
+            return nil
+        case (.publisher, .publisher):
+            return nil
+        case (.none, .none):
+            return true
+        default:
+            if codeString(self) == codeString(other) { // maybe unknown new case
+                return nil
+            }
+            return false
         }
     }
 }
@@ -249,46 +279,18 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
     @MainActor
     public func saveSnapshotsIfNeeded() {
         guard logConfig.saveSnapshots else { return }
+        let snapshotCollection = ReducerSnapshotCollection(title: identifier, snapshots: codeStringSnapshots)
         do {
-            let fileManager = FileManager.default
-            let rootFolderURL = try fileManager.url(
-                for: .cachesDirectory,
-                in: .userDomainMask,
-                appropriateFor: nil,
-                create: false
-            )
-
-            let logFolderURL = rootFolderURL.appendingPathComponent("ReducerLogs")
-            if !fileManager.fileExists(atPath: logFolderURL.relativePath) {
-                try fileManager.createDirectory(
-                    at: logFolderURL,
-                    withIntermediateDirectories: false,
-                    attributes: nil
-                )
+            if let path = try snapshotCollection.save() {
+                logger.info("Saved reducer snapshots to \n\(path)")
+                clearSnapshots()
             }
-            
-            let snapshotCollection = ReducerSnapshotCollection(title: identifier, snapshots: codeStringSnapshots)
-            Task.detached(priority: .userInitiated) { [logger] in
-                do {
-                    let logURL = logFolderURL.appendingPathComponent("\(snapshotCollection.title)", conformingTo: .json)
-                    let encoder = JSONEncoder()
-                    let data = try encoder.encode(snapshotCollection)
-                    
-                    if FileManager.default.createFile(atPath: logURL.relativePath, contents: data) {
-                        logger.info("Saved reducer snapshots to \n\(logURL.relativePath)")
-                        await self.clearSnapshots()
-                    }
-                    else {
-                        logger.error("Failed to save snapshots.")
-                    }
-                }
-                catch {
-                    logger.error(message: "Failed to saved snapshots.", error)
-                }
-            }            
+            else {
+                logger.error("Failed to save snapshots.")
+            }
         }
         catch {
-            logger.error(message: "Failed to saved snapshots.", error)
+            logger.error(message: "Failed to save snapshots.", error)
         }
     }
     
@@ -593,9 +595,9 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                 return .output(
                     date,
                     effect: codeString(effect),
-                    encodedEffect: effect.flatMap { Self.encoded($0) } ,
+                    encodedEffect: (effect is any Equatable) ? effect.flatMap { Self.encoded($0) } : nil,
                     state: propertyCodeStrings(state),
-                    encodedState: Self.encoded(state),
+                    encodedState: (state is any Equatable) ? Self.encoded(state) : nil,
                     nestedLevel: nestedLevel
                 )
             }
@@ -612,4 +614,64 @@ public enum ReducerSnapshotData: Codable {
 public struct ReducerSnapshotCollection: Codable {
     public let title: String
     public let snapshots: [ReducerSnapshotData]
+    
+    public init(title: String, snapshots: [ReducerSnapshotData]) {
+        self.title = title
+        self.snapshots = snapshots
+    }
+
+    public init(compressedData: Data) throws {
+        let data = try Self.decompressSnapshotData(compressedData)
+        let decoder = JSONDecoder()
+        self = try decoder.decode(Self.self, from: data)
+    }
+
+    public static func load(from url: URL) throws -> Self {
+        let compressedData = try Data(contentsOf: url)
+        return try .init(compressedData: compressedData)
+    }
+    
+    public func save() throws -> String? {
+        let fileManager = FileManager.default
+        let rootFolderURL = try fileManager.url(
+            for: .cachesDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: false
+        )
+
+        let logFolderURL = rootFolderURL.appendingPathComponent("ReducerLogs")
+        if !fileManager.fileExists(atPath: logFolderURL.relativePath) {
+            try fileManager.createDirectory(
+                at: logFolderURL,
+                withIntermediateDirectories: false,
+                attributes: nil
+            )
+        }
+
+        let logURL = logFolderURL
+            .appendingPathComponent("\(title)", conformingTo: .data)
+            .appendingPathExtension(Self.snapshotDataExtension)
+        
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(self)
+        let compressedData = try Self.compressSnapshotData(data)
+        
+        if FileManager.default.createFile(atPath: logURL.relativePath, contents: compressedData) {
+            return logURL.relativePath
+        }
+        else {
+            return nil
+        }
+    }
+    
+    private static func compressSnapshotData(_ data: Data) throws -> Data {
+        try (data as NSData).compressed(using: .lzma) as Data
+    }
+
+    private static func decompressSnapshotData(_ data: Data) throws -> Data {
+        try (data as NSData).decompressed(using: .lzma) as Data
+    }
+    
+    static let snapshotDataExtension = "lzma"
 }
