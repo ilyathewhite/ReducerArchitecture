@@ -114,6 +114,50 @@ extension StateAction: Equatable
 where Nsp.MutatingAction: Equatable, Nsp.EffectAction: Equatable, Nsp.PublishedValue: Equatable {
 }
 
+extension StateAction: Codable
+where Nsp.MutatingAction: Codable, Nsp.EffectAction: Codable, Nsp.PublishedValue: Codable {
+    public enum Base: Codable {
+        case mutating(Nsp.MutatingAction)
+        case effect(Nsp.EffectAction)
+        case publish(Nsp.PublishedValue)
+        case cancel
+        
+        init(_ value: StateAction) {
+            switch value {
+            case .mutating(let action, _, _):
+                self = .mutating(action)
+            case .effect(let action):
+                self = .effect(action)
+            case .publish(let value):
+                self = .publish(value)
+            case .cancel:
+                self = .cancel
+            }
+        }
+    }
+    
+    init(_ value: Base) {
+        switch value {
+        case .mutating(let action):
+            self = .mutating(action)
+        case .effect(let action):
+            self = .effect(action)
+        case .publish(let value):
+            self = .publish(value)
+        case .cancel:
+            self = .cancel
+        }
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        try Base(self).encode(to: encoder)
+    }
+    
+    public init(from decoder: Decoder) throws {
+        self = try .init(Base.init(from: decoder))
+    }
+}
+
 public enum StateEffect<Nsp: StoreNamespace> {
     public typealias Action = StateAction<Nsp>
     
@@ -169,6 +213,12 @@ public enum SyncStateEffect<Nsp: StoreNamespace> {
     case action(Action)
     case actions([Action])
     case none // cannot use Effect? in Reducer because it breaks the compiler
+}
+
+extension SyncStateEffect: Codable where StateAction<Nsp>: Codable {
+}
+
+extension SyncStateEffect: Equatable where StateAction<Nsp>: Equatable {
 }
 
 public struct StateReducer<Nsp: StoreNamespace> {
@@ -265,11 +315,11 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
     private var nestedLevel = 0
 
     public var environment: Environment?
-    private let reducer: Reducer
+    internal let reducer: Reducer
     private let tasksContainer = TasksContainer()
 
     public var logConfig = LogConfig()
-    private var logger: Logger
+    internal var logger: Logger
     private var codeStringSnapshots: [ReducerSnapshotData] = []
     
     private func clearSnapshots() {
@@ -384,20 +434,22 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         }
         
         if logConfig.saveSnapshots {
-            let snapshot = Snapshot.input(.now, action, state, nestedLevel: nestedLevel)
+            let snapshot: Snapshot = Snapshot.Input(date: .now, action: action, state: state, nestedLevel: nestedLevel).snapshot
             codeStringSnapshots.append(snapshot.logData())
         }
         
         let effect: Reducer.Effect?
+        let syncEffect: Reducer.SyncEffect?
         switch action {
         case .mutating(let mutatingAction, let animate, let animation):
             if animate {
-                effect = .init(withAnimation(animation ?? .default) { reducer.run(&state, mutatingAction) })
+                syncEffect = withAnimation(animation ?? .default) { reducer.run(&state, mutatingAction) }
             }
             else {
-                effect = .init(reducer.run(&state, mutatingAction))
+                syncEffect = reducer.run(&state, mutatingAction)
             }
-            
+            effect = syncEffect.map { .init($0) }
+
             var reducerStateChange = "\nreducer state change:"
             if logConfig.logState {
                 reducerStateChange.append("\n\n\(codeString(state))")
@@ -408,7 +460,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             }
 
             if logConfig.saveSnapshots {
-                let snapshot = Snapshot.stateChange(.now, state, nestedLevel: nestedLevel)
+                let snapshot = Snapshot.StateChange(date: .now, state: state, nestedLevel: nestedLevel).snapshot
                 codeStringSnapshots.append(snapshot.logData())
             }
             
@@ -421,15 +473,18 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             // When executing an effect, the environment may send more messages to the store while
             // inside this call
             nestedLevel += 1
+            syncEffect = nil
             effect = reducer.effect(env, state, effectAction)
             nestedLevel -= 1
 
         case .publish(let value):
             publishedValue.send(value)
+            syncEffect = nil
             effect = nil
             
         case .cancel:
             publishedValue.send(completion: .failure(.cancel))
+            syncEffect = nil
             effect = nil
         }
 
@@ -443,7 +498,14 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         }
         
         if logConfig.saveSnapshots {
-            let snapshot = Snapshot.output(.now, effect, state, nestedLevel: nestedLevel)
+            let snapshot = Snapshot.Output(
+                date: .now,
+                effect: effect,
+                syncEffect: syncEffect,
+                state: state,
+                nestedLevel: nestedLevel
+            )
+            .snapshot
             codeStringSnapshots.append(snapshot.logData())
         }
 
@@ -561,11 +623,44 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
     }
         
     public enum Snapshot {
-        case input(Date, Reducer.Action, State, nestedLevel: Int)
-        case stateChange(Date, State, nestedLevel: Int)
-        case output(Date, Reducer.Effect?, State, nestedLevel: Int)
+        public struct Input {
+            let date: Date
+            let action: Reducer.Action
+            let state: State
+            let nestedLevel: Int
+            
+            var snapshot: Snapshot {
+                .input(self)
+            }
+        }
         
-        static func encoded<T>(_ value: T) -> Data? {
+        public struct StateChange {
+            let date: Date
+            let state: State
+            let nestedLevel: Int
+
+            var snapshot: Snapshot {
+                .stateChange(self)
+            }
+        }
+        
+        public struct Output {
+            let date: Date
+            let effect: Reducer.Effect?
+            let syncEffect: Reducer.SyncEffect?
+            let state: State
+            let nestedLevel: Int
+
+            var snapshot: Snapshot {
+                .output(self)
+            }
+        }
+        
+        case input(Input)
+        case stateChange(StateChange)
+        case output(Output)
+        
+        private static func encode<T>(_ value: T) -> Data? {
             guard let codable = value as? Codable else { return nil }
             let encoder = JSONEncoder()
             return try? encoder.encode(codable)
@@ -573,105 +668,47 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         
         public func logData() -> ReducerSnapshotData {
             switch self {
-            case let .input(date, action, state, nestedLevel):
-                return .input(
-                    date,
-                    action: codeString(action),
-                    encodedAction: Self.encoded(action),
-                    state: propertyCodeStrings(state),
-                    encodedState: Self.encoded(state),
-                    nestedLevel: nestedLevel
-                )
+            case .input(let input):
+                let mutatingAction: MutatingAction?
+                switch input.action {
+                case .mutating(let action, _, _):
+                    mutatingAction = action
+                default:
+                    mutatingAction = nil
+                }
                 
-            case let .stateChange(date, state, nestedLevel: nestedLevel):
-                return .stateChange(
-                    date,
-                    state: propertyCodeStrings(state),
-                    encodedState: Self.encoded(state),
-                    nestedLevel: nestedLevel
+                return ReducerSnapshotData.Input(
+                    date: input.date,
+                    action: codeString(input.action),
+                    encodedAction: Self.encode(input.action),
+                    encodedMutatingAction: mutatingAction.flatMap { Self.encode($0) },
+                    state: propertyCodeStrings(input.state),
+                    encodedState: Self.encode(input.state),
+                    nestedLevel: input.nestedLevel
                 )
+                .snapshotData
                 
-            case let .output(date, effect, state, nestedLevel: nestedLevel):
-                return .output(
-                    date,
-                    effect: codeString(effect),
-                    encodedEffect: (effect is any Equatable) ? effect.flatMap { Self.encoded($0) } : nil,
-                    state: propertyCodeStrings(state),
-                    encodedState: (state is any Equatable) ? Self.encoded(state) : nil,
-                    nestedLevel: nestedLevel
+            case .stateChange(let stateChange):
+                return ReducerSnapshotData.StateChange(
+                    date: stateChange.date,
+                    state: propertyCodeStrings(stateChange.state),
+                    encodedState: Self.encode(stateChange.state),
+                    nestedLevel: stateChange.nestedLevel
                 )
+                .snapshotData
+                
+            case .output(let output):
+                return ReducerSnapshotData.Output(
+                    date: output.date,
+                    effect: codeString(output.effect),
+                    encodedEffect: (output.effect is any Equatable) ? output.effect.flatMap { Self.encode($0) } : nil,
+                    encodedSyncEffect: (output.syncEffect is any Equatable) ? output.syncEffect.flatMap { Self.encode($0) } : nil,
+                    state: propertyCodeStrings(output.state),
+                    encodedState: (output.state is any Equatable) ? Self.encode(output.state) : nil,
+                    nestedLevel: output.nestedLevel
+                )
+                .snapshotData
             }
         }
     }
-}
-
-public enum ReducerSnapshotData: Codable {
-    case input(Date, action: String, encodedAction: Data?, state: [CodePropertyValuePair], encodedState: Data?, nestedLevel: Int)
-    case stateChange(Date, state: [CodePropertyValuePair], encodedState: Data?, nestedLevel: Int)
-    case output(Date, effect: String, encodedEffect: Data?, state: [CodePropertyValuePair], encodedState: Data?, nestedLevel: Int)
-}
-
-public struct ReducerSnapshotCollection: Codable {
-    public let title: String
-    public let snapshots: [ReducerSnapshotData]
-    
-    public init(title: String, snapshots: [ReducerSnapshotData]) {
-        self.title = title
-        self.snapshots = snapshots
-    }
-
-    public init(compressedData: Data) throws {
-        let data = try Self.decompressSnapshotData(compressedData)
-        let decoder = JSONDecoder()
-        self = try decoder.decode(Self.self, from: data)
-    }
-
-    public static func load(from url: URL) throws -> Self {
-        let compressedData = try Data(contentsOf: url)
-        return try .init(compressedData: compressedData)
-    }
-    
-    public func save() throws -> String? {
-        let fileManager = FileManager.default
-        let rootFolderURL = try fileManager.url(
-            for: .cachesDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: false
-        )
-
-        let logFolderURL = rootFolderURL.appendingPathComponent("ReducerLogs")
-        if !fileManager.fileExists(atPath: logFolderURL.relativePath) {
-            try fileManager.createDirectory(
-                at: logFolderURL,
-                withIntermediateDirectories: false,
-                attributes: nil
-            )
-        }
-
-        let logURL = logFolderURL
-            .appendingPathComponent("\(title)", conformingTo: .data)
-            .appendingPathExtension(Self.snapshotDataExtension)
-        
-        let encoder = JSONEncoder()
-        let data = try encoder.encode(self)
-        let compressedData = try Self.compressSnapshotData(data)
-        
-        if FileManager.default.createFile(atPath: logURL.relativePath, contents: compressedData) {
-            return logURL.relativePath
-        }
-        else {
-            return nil
-        }
-    }
-    
-    private static func compressSnapshotData(_ data: Data) throws -> Data {
-        try (data as NSData).compressed(using: .lzma) as Data
-    }
-
-    private static func decompressSnapshotData(_ data: Data) throws -> Data {
-        try (data as NSData).decompressed(using: .lzma) as Data
-    }
-    
-    static let snapshotDataExtension = "lzma"
 }
