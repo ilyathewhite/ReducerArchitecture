@@ -103,6 +103,35 @@ public protocol AnyStore: AnyObject {
     @MainActor func cancel()
 }
 
+public enum StateStoreAction<Nsp: StoreNamespace> {
+    case user(StateAction<Nsp>)
+    case code(StateAction<Nsp>)
+    
+    var stateAction: StateAction<Nsp> {
+        switch self {
+        case .user(let action):
+            return action
+        case .code(let action):
+            return action
+        }
+    }
+    
+    var isFromUser: Bool {
+        switch self {
+        case .user:
+            return true
+        case .code:
+            return false
+        }
+    }
+}
+
+extension StateStoreAction: Equatable where StateAction<Nsp>: Equatable {
+}
+
+extension StateStoreAction: Codable where StateAction<Nsp>: Codable {
+}
+
 public enum StateAction<Nsp: StoreNamespace> {
     case mutating(Nsp.MutatingAction, animated: Bool = false, Animation? = nil)
     case effect(Nsp.EffectAction)
@@ -302,6 +331,7 @@ private actor TasksContainer {
 @MainActor
 public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
     public typealias Nsp = Nsp
+    public typealias StoreAction = StateStoreAction<Nsp>
     public typealias PublishedValue = Nsp.PublishedValue
     public typealias MutatingAction = Nsp.MutatingAction
     public typealias EffectAction = Nsp.EffectAction
@@ -368,18 +398,18 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
     public func addEffect(_ effect: Reducer.Effect) {
         switch effect {
         case .action(let action):
-            send(action)
+            send(.code(action))
             
         case .actions(let actions):
             for action in actions {
-                send(action)
+                send(.code(action))
             }
             
         case .asyncAction(let f):
             Task {
                 await tasksContainer.addTask { [weak self] in
                     if let action = try await f() {
-                        self?.send(action)
+                        self?.send(.code(action))
                     }
                 }
             }
@@ -389,7 +419,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                 await tasksContainer.addTask { [weak self] in
                     let actions = try await f()
                     for action in actions {
-                        self?.send(action)
+                        self?.send(.code(action))
                     }
                 }
             }
@@ -400,7 +430,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                 await tasksContainer.addTask { [weak self] in
                     for await action in actions {
                         try Task.checkCancellation()
-                        self?.send(action)
+                        self?.send(.code(action))
                     }
                 }
             }
@@ -410,7 +440,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                 await tasksContainer.addTask { [weak self] in
                     for await action in publisher.values {
                         try Task.checkCancellation()
-                        self?.send(action)
+                        self?.send(.code(action))
                     }
                 }
             }
@@ -421,9 +451,13 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
     }
 
     public func send(_ action: Reducer.Action) {
+        send(.user(action))
+    }
+    
+    private func send(_ storeAction: StoreAction) {
         var reducerInput = "\nreducer input:"
         if logConfig.logActions {
-            reducerInput.append("\n\n\(codeString(action))")
+            reducerInput.append("\n\n\(codeString(storeAction))")
         }
         if logConfig.logState {
             reducerInput.append("\n\n\(codeString(state))")
@@ -434,13 +468,13 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         }
         
         if logConfig.saveSnapshots {
-            let snapshot: Snapshot = Snapshot.Input(date: .now, action: action, state: state, nestedLevel: nestedLevel).snapshot
+            let snapshot: Snapshot = Snapshot.Input(date: .now, action: storeAction, state: state, nestedLevel: nestedLevel).snapshot
             codeStringSnapshots.append(snapshot.logData())
         }
         
         let effect: Reducer.Effect?
         let syncEffect: Reducer.SyncEffect?
-        switch action {
+        switch storeAction.stateAction {
         case .mutating(let mutatingAction, let animate, let animation):
             if animate {
                 syncEffect = withAnimation(animation ?? .default) { reducer.run(&state, mutatingAction) }
@@ -625,12 +659,16 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
     public enum Snapshot {
         public struct Input {
             let date: Date
-            let action: Reducer.Action
+            let action: StoreAction
             let state: State
             let nestedLevel: Int
             
             var snapshot: Snapshot {
                 .input(self)
+            }
+            
+            var isFromUser: Bool {
+                action.isFromUser
             }
         }
         
@@ -670,7 +708,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             switch self {
             case .input(let input):
                 let mutatingAction: MutatingAction?
-                switch input.action {
+                switch input.action.stateAction {
                 case .mutating(let action, _, _):
                     mutatingAction = action
                 default:
@@ -708,6 +746,15 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                     nestedLevel: output.nestedLevel
                 )
                 .snapshotData
+            }
+        }
+        
+        public var isFromUser: Bool {
+            switch self {
+            case .input(let input):
+                return input.isFromUser
+            default:
+                return false
             }
         }
     }
