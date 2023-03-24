@@ -137,6 +137,7 @@ public enum StateAction<Nsp: StoreNamespace> {
     case effect(Nsp.EffectAction)
     case publish(Nsp.PublishedValue)
     case cancel
+    case none
 }
 
 extension StateAction: Equatable
@@ -150,6 +151,7 @@ where Nsp.MutatingAction: Codable, Nsp.EffectAction: Codable, Nsp.PublishedValue
         case effect(Nsp.EffectAction)
         case publish(Nsp.PublishedValue)
         case cancel
+        case none
         
         init(_ value: StateAction) {
             switch value {
@@ -161,6 +163,8 @@ where Nsp.MutatingAction: Codable, Nsp.EffectAction: Codable, Nsp.PublishedValue
                 self = .publish(value)
             case .cancel:
                 self = .cancel
+            case .none:
+                self = .none
             }
         }
     }
@@ -175,6 +179,9 @@ where Nsp.MutatingAction: Codable, Nsp.EffectAction: Codable, Nsp.PublishedValue
             self = .publish(value)
         case .cancel:
             self = .cancel
+        case .none:
+            self = .none
+            
         }
     }
     
@@ -518,6 +525,10 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             
         case .cancel:
             publishedValue.send(completion: .failure(.cancel))
+            syncEffect = nil
+            effect = nil
+            
+        case .none:
             syncEffect = nil
             effect = nil
         }
