@@ -476,7 +476,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         
         if logConfig.saveSnapshots {
             let snapshot: Snapshot = Snapshot.Input(date: .now, action: storeAction, state: state, nestedLevel: nestedLevel).snapshot
-            codeStringSnapshots.append(snapshot.logData())
+            codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
         }
         
         let effect: Reducer.Effect?
@@ -502,7 +502,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
 
             if logConfig.saveSnapshots {
                 let snapshot = Snapshot.StateChange(date: .now, state: state, nestedLevel: nestedLevel).snapshot
-                codeStringSnapshots.append(snapshot.logData())
+                codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
             }
             
         case .effect(let effectAction):
@@ -551,7 +551,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                 nestedLevel: nestedLevel
             )
             .snapshot
-            codeStringSnapshots.append(snapshot.logData())
+            codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
         }
 
         if let e = effect {
@@ -713,13 +713,19 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         case stateChange(StateChange)
         case output(Output)
         
-        private static func encode<T>(_ value: T) -> Data? {
+        private static func encode<T>(_ value: T, _ logger: Logger) -> Data? {
             guard let codable = value as? Codable else { return nil }
             let encoder = JSONEncoder()
-            return try? encoder.encode(codable)
+            do {
+                return try encoder.encode(codable)
+            }
+            catch {
+                logger.error(message: "Failed to encode \(value)", error)
+                return nil
+            }
         }
         
-        public func logData() -> ReducerSnapshotData {
+        public func logData(errorLogger logger: Logger) -> ReducerSnapshotData {
             switch self {
             case .input(let input):
                 let mutatingAction: MutatingAction?
@@ -733,10 +739,10 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                 return ReducerSnapshotData.Input(
                     date: input.date,
                     action: codeString(input.action),
-                    encodedAction: Self.encode(input.action),
-                    encodedMutatingAction: mutatingAction.flatMap { Self.encode($0) },
+                    encodedAction: Self.encode(input.action, logger),
+                    encodedMutatingAction: mutatingAction.flatMap { Self.encode($0, logger) },
                     state: propertyCodeStrings(input.state),
-                    encodedState: Self.encode(input.state),
+                    encodedState: Self.encode(input.state, logger),
                     nestedLevel: input.nestedLevel
                 )
                 .snapshotData
@@ -745,7 +751,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                 return ReducerSnapshotData.StateChange(
                     date: stateChange.date,
                     state: propertyCodeStrings(stateChange.state),
-                    encodedState: Self.encode(stateChange.state),
+                    encodedState: Self.encode(stateChange.state, logger),
                     nestedLevel: stateChange.nestedLevel
                 )
                 .snapshotData
@@ -754,10 +760,10 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                 return ReducerSnapshotData.Output(
                     date: output.date,
                     effect: codeString(output.effect),
-                    encodedEffect: (output.effect is any Equatable) ? output.effect.flatMap { Self.encode($0) } : nil,
-                    encodedSyncEffect: (output.syncEffect is any Equatable) ? output.syncEffect.flatMap { Self.encode($0) } : nil,
+                    encodedEffect: (output.effect is any Equatable) ? output.effect.flatMap { Self.encode($0, logger) } : nil,
+                    encodedSyncEffect: (output.syncEffect is any Equatable) ? output.syncEffect.flatMap { Self.encode($0, logger) } : nil,
                     state: propertyCodeStrings(output.state),
-                    encodedState: (output.state is any Equatable) ? Self.encode(output.state) : nil,
+                    encodedState: (output.state is any Equatable) ? Self.encode(output.state, logger) : nil,
                     nestedLevel: output.nestedLevel
                 )
                 .snapshotData
