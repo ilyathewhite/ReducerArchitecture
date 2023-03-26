@@ -646,6 +646,10 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             .catch { Just(.failure($0)) }
             .eraseToAnyPublisher()
     }
+    
+    public var asyncValues: AsyncThrowingPublisher<AnyPublisher<PublishedValue, Cancel>> {
+        value.values
+    }
 
     public func publish(_ value: PublishedValue) {
         send(.publish(value))
