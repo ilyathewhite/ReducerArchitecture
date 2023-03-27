@@ -647,8 +647,14 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             .eraseToAnyPublisher()
     }
     
-    public var asyncValues: AsyncThrowingPublisher<AnyPublisher<PublishedValue, Cancel>> {
+    public var throwingAsyncValues: AsyncThrowingPublisher<AnyPublisher<PublishedValue, Cancel>> {
         value.values
+    }
+
+    public var asyncValues: AsyncPublisher<AnyPublisher<PublishedValue, Never>> {
+        value.catch { _ in Empty<PublishedValue, Never>() }
+            .eraseToAnyPublisher()
+            .values
     }
 
     public func publish(_ value: PublishedValue) {
