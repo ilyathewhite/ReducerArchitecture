@@ -93,6 +93,7 @@ public struct AsyncResult<T: Equatable>: Equatable {
     private(set) var count = 0
 }
 
+@MainActor
 public protocol AnyStore: AnyObject {
     associatedtype PublishedValue
 
@@ -101,6 +102,35 @@ public protocol AnyStore: AnyObject {
     @MainActor var value: AnyPublisher<PublishedValue, Cancel> { get }
     @MainActor func publish(_ value: PublishedValue)
     @MainActor func cancel()
+}
+
+public extension AnyStore {
+    var valueResult: AnyPublisher<Result<PublishedValue, Cancel>, Never> {
+        value
+            .map { .success($0) }
+            .catch { Just(.failure($0)) }
+            .eraseToAnyPublisher()
+    }
+    
+    var throwingAsyncValues: AsyncThrowingPublisher<AnyPublisher<PublishedValue, Cancel>> {
+        value.values
+    }
+
+    var asyncValues: AsyncPublisher<AnyPublisher<PublishedValue, Never>> {
+        value.catch { _ in Empty<PublishedValue, Never>() }
+            .eraseToAnyPublisher()
+            .values
+    }
+    
+    func get(callback: @escaping (PublishedValue) async -> Void) async {
+        await asyncValues.get(callback: callback)
+    }
+    
+    func getFirst(callback: @escaping (PublishedValue) async -> Void) async {
+        if let firstValue = try? await value.first().async() {
+            await callback(firstValue)
+        }
+    }
 }
 
 public enum StateStoreAction<Nsp: StoreNamespace> {
@@ -637,24 +667,6 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         publishedValue
             .receive(on: DispatchQueue.main)
             .eraseToAnyPublisher()
-    }
-
-    public var valueResult: AnyPublisher<Result<PublishedValue, Cancel>, Never> {
-        publishedValue
-            .receive(on: DispatchQueue.main)
-            .map { .success($0) }
-            .catch { Just(.failure($0)) }
-            .eraseToAnyPublisher()
-    }
-    
-    public var throwingAsyncValues: AsyncThrowingPublisher<AnyPublisher<PublishedValue, Cancel>> {
-        value.values
-    }
-
-    public var asyncValues: AsyncPublisher<AnyPublisher<PublishedValue, Never>> {
-        value.catch { _ in Empty<PublishedValue, Never>() }
-            .eraseToAnyPublisher()
-            .values
     }
 
     public func publish(_ value: PublishedValue) {
