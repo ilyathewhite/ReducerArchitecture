@@ -9,6 +9,7 @@
 #if canImport(UIKit)
 
 import UIKit
+import SwiftUI
 import Combine
 import CombineEx
 
@@ -34,6 +35,25 @@ public extension BasicReducerArchitectureVC {
     @MainActor
     func cancel() {
         store.cancel()
+    }
+}
+
+public class HostingController<T: StoreUIWrapper>: UIHostingController<T.ContentView> {
+    public let store: T.Store
+    
+    public init(store: T.Store) {
+        self.store = store
+        super.init(rootView: T.ContentView(store: store))
+    }
+    
+    @MainActor required dynamic init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    public override func didMove(toParent parent: UIViewController?) {
+        if parent == nil {
+            store.cancel()
+        }
     }
 }
 
