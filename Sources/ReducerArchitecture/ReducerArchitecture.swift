@@ -94,17 +94,23 @@ public struct AsyncResult<T: Equatable>: Equatable {
 }
 
 @MainActor
-public protocol AnyStore: AnyObject {
+// Conformance to Hashable is necessary for SwiftUI navigation
+public protocol AnyStore: AnyObject, Hashable, Identifiable {
     associatedtype PublishedValue
 
-    @MainActor var identifier: String { get }
+    var identifier: String { get }
 
-    @MainActor var value: AnyPublisher<PublishedValue, Cancel> { get }
-    @MainActor func publish(_ value: PublishedValue)
-    @MainActor func cancel()
+    var value: AnyPublisher<PublishedValue, Cancel> { get }
+    func publish(_ value: PublishedValue)
+    func cancel()
 }
 
 public extension AnyStore {
+    nonisolated
+    var id: ObjectIdentifier {
+        ObjectIdentifier(self)
+    }
+    
     var valueResult: AnyPublisher<Result<PublishedValue, Cancel>, Never> {
         value
             .map { .success($0) }
@@ -675,6 +681,18 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
 
     public func cancel() {
         send(.cancel)
+    }
+    
+    // Hashable
+    
+    nonisolated
+    public static func == (lhs: StateStore, rhs: StateStore) -> Bool {
+        lhs === rhs
+    }
+    
+    nonisolated
+    public func hash(into hasher: inout Hasher) {
+        ObjectIdentifier(self).hash(into: &hasher)
     }
     
     // Mark: - Logging

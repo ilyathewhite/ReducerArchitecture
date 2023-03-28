@@ -53,7 +53,7 @@ public protocol StoreUIWrapper: StoreNamespace {
     associatedtype ContentView: StoreContentView where ContentView.StoreWrapper == Self
 }
 
-public protocol StoreUIContainer<UIWrapper> {
+public protocol StoreUIContainer<UIWrapper>: Hashable, Identifiable {
     associatedtype UIWrapper: StoreUIWrapper
     var store: UIWrapper.Store { get }
     init(_ store: UIWrapper.Store)
@@ -67,7 +67,11 @@ extension StoreUIContainer {
     public func makeAnyView() -> AnyView {
         AnyView(makeView())
     }
-
+    
+    public var id: UIWrapper.Store.ID {
+        store.id
+    }
+    
     @MainActor
     public var value: UIWrapper.Store.ValuePublisher {
         store.value
@@ -80,6 +84,10 @@ extension StoreUIContainer {
 }
 
 public struct StoreUI<UIWrapper: StoreUIWrapper>: StoreUIContainer {
+    public static func == (lhs: StoreUI<UIWrapper>, rhs: StoreUI<UIWrapper>) -> Bool {
+        lhs.store === rhs.store
+    }
+    
     public let store: UIWrapper.Store
 
     public init(_ store: UIWrapper.Store) {
