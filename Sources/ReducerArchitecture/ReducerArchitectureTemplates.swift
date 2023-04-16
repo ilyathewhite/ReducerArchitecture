@@ -58,9 +58,9 @@ extension <#StoreNsp#> {
 import SwiftUI
 import ReducerArchitecture
 
-extension <#StoreNsp#>: StoreUIWrapper {
+extension <#StoreNsp#>: StoreUINamespace {
     struct ContentView: StoreContentView {
-        typealias StoreWrapper = <#StoreNsp#>
+        typealias Nsp = <#StoreNsp#>
         @ObservedObject var store: Store
         
         var body: some View {

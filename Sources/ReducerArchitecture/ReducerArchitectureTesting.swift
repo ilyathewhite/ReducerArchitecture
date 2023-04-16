@@ -42,7 +42,7 @@ extension StateStore {
         snapshotsURL: URL,
         maxStepCount: Int?,
         isMatchingStateChange: (_ inputStep: Int, State, ReducerSnapshotData.Output) -> (Comparison, TestResult),
-        isMatchingOutput: (_ inputStep: Int, Reducer.SyncEffect, ReducerSnapshotData.Output) -> (Comparison, TestResult)
+        isMatchingOutput: (_ inputStep: Int, SyncEffect, ReducerSnapshotData.Output) -> (Comparison, TestResult)
     )
     -> TestResult
     where MutatingAction: Decodable
@@ -144,17 +144,17 @@ extension StateStore {
     }
     
     nonisolated
-    private static func isMatchingOutput(inputStep: Int, effect: Reducer.SyncEffect, output: ReducerSnapshotData.Output) -> (Comparison, TestResult)
-    where Reducer.SyncEffect: Decodable & Equatable {
+    private static func isMatchingOutput(inputStep: Int, effect: SyncEffect, output: ReducerSnapshotData.Output) -> (Comparison, TestResult)
+    where SyncEffect: Decodable & Equatable {
         let comparison: Comparison = .equatable
-        guard let otherEffect: Reducer.SyncEffect = decode(output.encodedSyncEffect) else {
+        guard let otherEffect: SyncEffect = decode(output.encodedSyncEffect) else {
             return (comparison, .decodingError(inputStep: inputStep))
         }
         return (comparison, effect == otherEffect ? .success : .outputMismatch(inputStep: inputStep))
     }
     
     nonisolated
-    private static func isMatchingOutput(inputStep: Int, effect: Reducer.SyncEffect, output: ReducerSnapshotData.Output) -> (Comparison, TestResult) {
+    private static func isMatchingOutput(inputStep: Int, effect: SyncEffect, output: ReducerSnapshotData.Output) -> (Comparison, TestResult) {
         return (.codeString, codeString(effect) == output.effect ? .success : .outputMismatch(inputStep: inputStep))
     }
     
@@ -162,7 +162,7 @@ extension StateStore {
     
     @MainActor
     public func testAgainstSnapshots(startState: State, snapshotsURL: URL, maxStepCount: Int? = nil) -> TestResult
-    where MutatingAction: Decodable, State: Decodable & Equatable, Reducer.SyncEffect: Decodable & Equatable {
+    where MutatingAction: Decodable, State: Decodable & Equatable, SyncEffect: Decodable & Equatable {
         testAgainstSnapshots(
             startState: startState,
             snapshotsURL: snapshotsURL,
@@ -186,7 +186,7 @@ extension StateStore {
     
     @MainActor
     public func testAgainstSnapshots(startState: State, snapshotsURL: URL, maxStepCount: Int? = nil) -> TestResult
-    where MutatingAction: Decodable, Reducer.SyncEffect: Decodable & Equatable {
+    where MutatingAction: Decodable, SyncEffect: Decodable & Equatable {
         testAgainstSnapshots(
             startState: startState,
             snapshotsURL: snapshotsURL,

@@ -16,7 +16,6 @@ import CombineEx
 public protocol BasicReducerArchitectureVC: UIViewController {
     associatedtype Store: AnyStore
     var store: Store { get }
-    var value: AnyPublisher<Store.PublishedValue, Cancel> { get }
 }
 
 public extension BasicReducerArchitectureVC {
@@ -38,7 +37,7 @@ public extension BasicReducerArchitectureVC {
     }
 }
 
-public class HostingController<T: StoreUIWrapper>: UIHostingController<T.ContentView> {
+public class HostingController<T: StoreUINamespace>: UIHostingController<T.ContentView> {
     public let store: T.Store
     
     public init(store: T.Store) {

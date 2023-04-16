@@ -21,17 +21,7 @@ import Combine
 import CombineEx
 import os
 
-public protocol Namespace {
-    static var identifier: String { get }
-}
-
-public extension Namespace {
-    static var identifier: String {
-        "\(Self.self)"
-    }
-}
-
-public protocol StoreNamespace: Namespace {
+public protocol StoreNamespace {
     associatedtype StoreEnvironment
     associatedtype StoreState
     associatedtype MutatingAction
@@ -49,56 +39,16 @@ extension StoreNamespace {
     }
 }
 
-public enum UIValue<T> {
-    case fromUI(T)
-    case fromCode(T)
-
-    public var value: T {
-        switch self {
-        case .fromUI(let res): return res
-        case .fromCode(let res): return res
-        }
+public extension StoreNamespace {
+    static var identifier: String {
+        "\(Self.self)"
     }
-
-    public func wrapper() -> (T) -> Self {
-        return {
-            switch self {
-            case .fromUI:
-                return .fromUI($0)
-            case .fromCode:
-                return .fromCode($0)
-            }
-        }
-    }
-
-    public var isFromUI: Bool {
-        switch self {
-        case .fromUI: return true
-        case .fromCode: return false
-        }
-    }
-}
-
-extension UIValue: Equatable where T: Equatable {}
-
-public struct AsyncResult<T: Equatable>: Equatable {
-    public var value: T? {
-        didSet {
-            count += 1
-        }
-    }
-
-    public init() {}
-
-    private(set) var count = 0
 }
 
 @MainActor
 // Conformance to Hashable is necessary for SwiftUI navigation
 public protocol AnyStore: AnyObject, Hashable, Identifiable {
     associatedtype PublishedValue
-
-    var identifier: String { get }
 
     var value: AnyPublisher<PublishedValue, Cancel> { get }
     func publish(_ value: PublishedValue)
@@ -139,287 +89,102 @@ public extension AnyStore {
     }
 }
 
-public enum StateStoreAction<Nsp: StoreNamespace> {
-    case user(StateAction<Nsp>)
-    case code(StateAction<Nsp>)
-    
-    var stateAction: StateAction<Nsp> {
-        switch self {
-        case .user(let action):
-            return action
-        case .code(let action):
-            return action
-        }
-    }
-    
-    var isFromUser: Bool {
-        switch self {
-        case .user:
-            return true
-        case .code:
-            return false
-        }
-    }
-}
-
-extension StateStoreAction: Equatable where StateAction<Nsp>: Equatable {
-}
-
-extension StateStoreAction: Codable where StateAction<Nsp>: Codable {
-}
-
-public enum StateAction<Nsp: StoreNamespace> {
-    case mutating(Nsp.MutatingAction, animated: Bool = false, Animation? = nil)
-    case effect(Nsp.EffectAction)
-    case publish(Nsp.PublishedValue)
-    case cancel
-    case none
-}
-
-extension StateAction: Equatable
-where Nsp.MutatingAction: Equatable, Nsp.EffectAction: Equatable, Nsp.PublishedValue: Equatable {
-}
-
-extension StateAction: Codable
-where Nsp.MutatingAction: Codable, Nsp.EffectAction: Codable, Nsp.PublishedValue: Codable {
-    public enum Base: Codable {
-        case mutating(Nsp.MutatingAction)
-        case effect(Nsp.EffectAction)
-        case publish(Nsp.PublishedValue)
-        case cancel
-        case none
-        
-        init(_ value: StateAction) {
-            switch value {
-            case .mutating(let action, _, _):
-                self = .mutating(action)
-            case .effect(let action):
-                self = .effect(action)
-            case .publish(let value):
-                self = .publish(value)
-            case .cancel:
-                self = .cancel
-            case .none:
-                self = .none
-            }
-        }
-    }
-    
-    init(_ value: Base) {
-        switch value {
-        case .mutating(let action):
-            self = .mutating(action)
-        case .effect(let action):
-            self = .effect(action)
-        case .publish(let value):
-            self = .publish(value)
-        case .cancel:
-            self = .cancel
-        case .none:
-            self = .none
-            
-        }
-    }
-    
-    public func encode(to encoder: Encoder) throws {
-        try Base(self).encode(to: encoder)
-    }
-    
-    public init(from decoder: Decoder) throws {
-        self = try .init(Base.init(from: decoder))
-    }
-}
-
-public enum StateEffect<Nsp: StoreNamespace> {
-    public typealias Action = StateAction<Nsp>
-    
-    case action(Action)
-    case actions([Action])
-    case asyncAction(() async throws -> Action?)
-    case asyncActions(() async throws -> [Action])
-    case asyncActionSequence(() -> AsyncStream<Action>)
-    case publisher(AnyPublisher<Action, Never>)
-    case none // cannot use Effect? in Reducer because it breaks the compiler
-    
-    init(_ e: SyncStateEffect<Nsp>) {
-        switch e {
-        case .action(let value):
-            self = .action(value)
-        case .actions(let value):
-            self = .actions(value)
-        case .none:
-            self = .none
-        }
-    }
-}
-
-extension StateEffect where Action: Equatable {
-    func isEqual(to other: Self) -> Bool? {
-        switch (self, other) {
-        case let (.action(action), .action(otherAction)):
-            return action == otherAction
-        case let (.actions(actions), .actions(otherActions)):
-            return actions == otherActions
-        case (.asyncAction, .asyncAction):
-            return nil
-        case (.asyncActions, .asyncActions):
-            return nil
-        case (.asyncActionSequence, .asyncActionSequence):
-            return nil
-        case (.publisher, .publisher):
-            return nil
-        case (.none, .none):
-            return true
-        default:
-            if codeString(self) == codeString(other) { // maybe unknown new case
-                return nil
-            }
-            return false
-        }
-    }
-}
-
-public enum SyncStateEffect<Nsp: StoreNamespace> {
-    public typealias Action = StateAction<Nsp>
-
-    case action(Action)
-    case actions([Action])
-    case none // cannot use Effect? in Reducer because it breaks the compiler
-}
-
-extension SyncStateEffect: Codable where StateAction<Nsp>: Codable {
-}
-
-extension SyncStateEffect: Equatable where StateAction<Nsp>: Equatable {
-}
-
-public struct StateReducer<Nsp: StoreNamespace> {
-    public typealias PublishedValue = Nsp.PublishedValue
-    public typealias MutatingAction = Nsp.MutatingAction
-    public typealias EffectAction = Nsp.EffectAction
-    public typealias Environment = Nsp.StoreEnvironment
-    public typealias Value = Nsp.StoreState
-    
-    public typealias Action = StateAction<Nsp>
-    public typealias Effect = StateEffect<Nsp>
-    public typealias SyncEffect = SyncStateEffect<Nsp>
-
-    let run: (inout Value, MutatingAction) -> SyncEffect
-    let effect: (Environment, Value, EffectAction) -> Effect
-
-    public init(run: @escaping (inout Value, MutatingAction) -> SyncEffect, effect: @escaping (Environment, Value, EffectAction) -> Effect) {
-        self.run = run
-        self.effect = effect
-    }
-}
-
-extension StateReducer where EffectAction == Never {
-    @MainActor
-    public init(_ run: @escaping (inout Value, MutatingAction) -> SyncEffect) {
-        self = StateReducer(run: run, effect: { _, _, effectAction in .none })
-    }
-}
-
-private actor TasksContainer {
-    private typealias ActionTask = Task<Void, any Error>
-
-    private enum TaskBox {
-        case willStart
-        case inProgress(ActionTask)
-        
-        func cancelTask() {
-            switch self {
-            case .inProgress(let task):
-                task.cancel()
-            default:
-                return
-            }
-        }
-    }
-
-    private var tasks: [UUID: TaskBox] = [:]
-    
-    deinit {
-        for (_, box) in tasks {
-            box.cancelTask()
-        }
-        tasks.removeAll()
-    }
-    
-    func removeTask(id: UUID) {
-        tasks.removeValue(forKey: id)
-    }
-    
-    func addTask(_ f: @escaping () async throws -> Void) {
-        let id = UUID()
-        tasks[id] = .willStart
-        let task = Task { [weak self] in
-            do {
-                try await f()
-                await self?.removeTask(id: id)
-            }
-            catch {
-                await self?.removeTask(id: id)
-                throw error
-            }
-        }
-        
-        if (self.tasks[id] != nil) && !task.isCancelled {
-            self.tasks[id] = .inProgress(task)
-        }
-    }
-}
-
 // StateStore should not be subclassed because of a bug in SwiftUI
 @MainActor
-public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
+public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     public typealias Nsp = Nsp
-    public typealias StoreAction = StateStoreAction<Nsp>
     public typealias PublishedValue = Nsp.PublishedValue
     public typealias MutatingAction = Nsp.MutatingAction
     public typealias EffectAction = Nsp.EffectAction
     public typealias Environment = Nsp.StoreEnvironment
     public typealias State = Nsp.StoreState
     
-    public typealias Reducer = StateReducer<Nsp>
     public typealias ValuePublisher = AnyPublisher<PublishedValue, Cancel>
-
+    
+    public enum Action {
+        case mutating(MutatingAction, animated: Bool = false, Animation? = nil)
+        case effect(EffectAction)
+        case publish(PublishedValue)
+        case cancel
+        case none
+    }
+    
+    public enum StoreAction {
+        case user(Action)
+        case code(Action)
+        
+        var action: Action {
+            switch self {
+            case .user(let action):
+                return action
+            case .code(let action):
+                return action
+            }
+        }
+        
+        var isFromUser: Bool {
+            switch self {
+            case .user:
+                return true
+            case .code:
+                return false
+            }
+        }
+    }
+    
+    public enum SyncEffect {
+        case action(Action)
+        case actions([Action])
+        case none // cannot use Effect? in Reducer because it breaks the compiler
+    }
+    
+    public enum Effect {
+        case action(Action)
+        case actions([Action])
+        case asyncAction(() async -> Action?)
+        case asyncActions(() async -> [Action])
+        case asyncActionSequence(() -> AsyncStream<Action>)
+        case publisher(AnyPublisher<Action, Never>)
+        case none // cannot use Effect? in Reducer because it breaks the compiler
+        
+        init(_ e: SyncEffect) {
+            switch e {
+            case .action(let value):
+                self = .action(value)
+            case .actions(let value):
+                self = .actions(value)
+            case .none:
+                self = .none
+            }
+        }
+    }
+    
+    public struct Reducer {
+        public typealias Value = Nsp.StoreState
+        
+        let run: (inout Value, MutatingAction) -> SyncEffect
+        let effect: (Environment, Value, EffectAction) -> Effect
+        
+        public init(run: @escaping (inout Value, MutatingAction) -> SyncEffect, effect: @escaping (Environment, Value, EffectAction) -> Effect) {
+            self.run = run
+            self.effect = effect
+        }
+    }
+    
     public var identifier: String
     private var nestedLevel = 0
-
+    
     public var environment: Environment?
     internal let reducer: Reducer
-    private let tasksContainer = TasksContainer()
-
+    private let taskManager = TaskManager()
+    
     public var logConfig = LogConfig()
     internal var logger: Logger
     private var codeStringSnapshots: [ReducerSnapshotData] = []
     
-    private func clearSnapshots() {
-        codeStringSnapshots = []
-    }
-
-    @MainActor
-    public func saveSnapshotsIfNeeded() {
-        guard logConfig.saveSnapshots else { return }
-        let snapshotCollection = ReducerSnapshotCollection(title: identifier, snapshots: codeStringSnapshots)
-        do {
-            if let path = try snapshotCollection.save() {
-                logger.info("Saved reducer snapshots to \n\(path)")
-                clearSnapshots()
-            }
-            else {
-                logger.error("Failed to save snapshots.")
-            }
-        }
-        catch {
-            logger.error(message: "Failed to save snapshots.", error)
-        }
-    }
-    
     @Published public private(set) var state: State
     private var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
-
+    
     public init(_ identifier: String, _ initialValue: State, reducer: Reducer, env: Environment?) {
         self.identifier = identifier
         self.reducer = reducer
@@ -433,12 +198,12 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
     where Environment == Never, EffectAction == Never {
         self.init(identifier, initialValue, reducer: reducer, env: nil)
     }
-
+    
     public convenience init(_ identifier: String, _ initialValue: State, reducer: Reducer) where Environment == Void {
         self.init(identifier, initialValue, reducer: reducer, env: ())
     }
-
-    public func addEffect(_ effect: Reducer.Effect) {
+    
+    public func addEffect(_ effect: Effect) {
         switch effect {
         case .action(let action):
             send(.code(action))
@@ -450,8 +215,8 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             
         case .asyncAction(let f):
             Task {
-                await tasksContainer.addTask { [weak self] in
-                    if let action = try await f() {
+                await taskManager.addTask { [weak self] in
+                    if let action = await f() {
                         self?.send(.code(action))
                     }
                 }
@@ -459,8 +224,8 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             
         case .asyncActions(let f):
             Task {
-                await tasksContainer.addTask { [weak self] in
-                    let actions = try await f()
+                await taskManager.addTask { [weak self] in
+                    let actions = await f()
                     for action in actions {
                         self?.send(.code(action))
                     }
@@ -470,9 +235,9 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         case .asyncActionSequence(let f):
             let actions = f()
             Task {
-                await tasksContainer.addTask { [weak self] in
+                await taskManager.addTask { [weak self] in
                     for await action in actions {
-                        try Task.checkCancellation()
+                        guard !Task.isCancelled else { return }
                         self?.send(.code(action))
                     }
                 }
@@ -480,9 +245,9 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             
         case .publisher(let publisher):
             Task {
-                await tasksContainer.addTask { [weak self] in
+                await taskManager.addTask { [weak self] in
                     for await action in publisher.values {
-                        try Task.checkCancellation()
+                        guard !Task.isCancelled else { return }
                         self?.send(.code(action))
                     }
                 }
@@ -492,8 +257,8 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             break
         }
     }
-
-    public func send(_ action: Reducer.Action) {
+    
+    public func send(_ action: Action) {
         send(.user(action))
     }
     
@@ -515,9 +280,9 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
         }
         
-        let effect: Reducer.Effect?
-        let syncEffect: Reducer.SyncEffect?
-        switch storeAction.stateAction {
+        let effect: Effect?
+        let syncEffect: SyncEffect?
+        switch storeAction.action {
         case .mutating(let mutatingAction, let animate, let animation):
             if animate {
                 syncEffect = withAnimation(animation ?? .default) { reducer.run(&state, mutatingAction) }
@@ -526,7 +291,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                 syncEffect = reducer.run(&state, mutatingAction)
             }
             effect = syncEffect.map { .init($0) }
-
+            
             var reducerStateChange = "\nreducer state change:"
             if logConfig.logState {
                 reducerStateChange.append("\n\n\(codeString(state))")
@@ -535,7 +300,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                 reducerStateChange.append("\n\n")
                 logger.debug("\(reducerStateChange)")
             }
-
+            
             if logConfig.saveSnapshots {
                 let snapshot = Snapshot.StateChange(date: .now, state: state, nestedLevel: nestedLevel).snapshot
                 codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
@@ -546,14 +311,14 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                 assertionFailure()
                 return
             }
-
+            
             // When executing an effect, the environment may send more messages to the store while
             // inside this call
             nestedLevel += 1
             syncEffect = nil
             effect = reducer.effect(env, state, effectAction)
             nestedLevel -= 1
-
+            
         case .publish(let value):
             publishedValue.send(value)
             syncEffect = nil
@@ -568,7 +333,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             syncEffect = nil
             effect = nil
         }
-
+        
         var reducerOutput = "\nreducer output:"
         if logConfig.logActions {
             reducerOutput.append("\n\n\(codeString(effect))")
@@ -580,105 +345,101 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         
         if logConfig.saveSnapshots {
             let snapshot = Snapshot.Output(
-                date: .now,
+                date: Date.now,
                 effect: effect,
                 syncEffect: syncEffect,
                 state: state,
                 nestedLevel: nestedLevel
             )
-            .snapshot
+                .snapshot
             codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
         }
-
+        
         if let e = effect {
             addEffect(e)
         }
     }
+}
 
-    public func updates<Value>(
+public extension StateStore {
+    func updates<Value>(
         on keyPath: KeyPath<State, Value>,
         compare: @escaping (Value, Value) -> Bool) -> AnyPublisher<Value, Never> {
-        $state
-            .map(keyPath)
-            .removeDuplicates(by: compare)
-            .dropFirst()
-            .eraseToAnyPublisher()
-    }
-
-    public func updates<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> AnyPublisher<Value, Never> {
+            $state
+                .map(keyPath)
+                .removeDuplicates(by: compare)
+                .dropFirst()
+                .eraseToAnyPublisher()
+        }
+    
+    func updates<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> AnyPublisher<Value, Never> {
         updates(on: keyPath, compare: ==)
     }
-
-    public func distinctValues<Value>(
+    
+    func distinctValues<Value>(
         on keyPath: KeyPath<State, Value>,
         compare: @escaping (Value, Value) -> Bool) -> AnyPublisher<Value, Never> {
-        $state
-            .map(keyPath)
-            .removeDuplicates(by: compare)
-            .eraseToAnyPublisher()
-    }
-
-    public func distinctValues<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> AnyPublisher<Value, Never> {
+            $state
+                .map(keyPath)
+                .removeDuplicates(by: compare)
+                .eraseToAnyPublisher()
+        }
+    
+    func distinctValues<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> AnyPublisher<Value, Never> {
         distinctValues(on: keyPath, compare: ==)
     }
-
-    public func bind<OtherNsp: StoreNamespace, OtherValue>(
+    
+    func bind<OtherNsp: StoreNamespace, OtherValue>(
         to otherStore: OtherNsp.Store,
         on keyPath: KeyPath<OtherNsp.StoreState, OtherValue>,
-        with action: @escaping (OtherValue) -> Reducer.Action?,
+        with action: @escaping (OtherValue) -> Action?,
         compare: @escaping (OtherValue, OtherValue) -> Bool
     ) {
         addEffect(
             .publisher(
                 otherStore
-                .distinctValues(on: keyPath, compare: compare)
-                .compactMap { action($0) }
-                .eraseToAnyPublisher()
+                    .distinctValues(on: keyPath, compare: compare)
+                    .compactMap { action($0) }
+                    .eraseToAnyPublisher()
             )
         )
     }
-
-    public func bind<OtherNsp: StoreNamespace, OtherValue: Equatable>(
+    
+    func bind<OtherNsp: StoreNamespace, OtherValue: Equatable>(
         to otherStore: OtherNsp.Store,
         on keyPath: KeyPath<OtherNsp.StoreState, OtherValue>,
-        with action: @escaping (OtherValue) -> Reducer.Action?) {
+        with action: @escaping (OtherValue) -> Action?
+    ) {
         bind(to: otherStore, on: keyPath, with: action, compare: ==)
     }
-
-    public func bindPublishedValue<OtherNsp: StoreNamespace>(
+    
+    func bindPublishedValue<OtherNsp: StoreNamespace>(
         of otherStore: OtherNsp.Store,
-        with action: @escaping (OtherNsp.PublishedValue) -> Reducer.Action) {
-            addEffect(
-                .publisher(
-                    otherStore.publishedValue.map { action($0) }
-                        .catch { _ in Just(.cancel) }
-                        .eraseToAnyPublisher()
-                )
+        with action: @escaping (OtherNsp.PublishedValue
+    )
+    -> Action)
+    {
+        addEffect(
+            .publisher(
+                otherStore.publishedValue.map { action($0) }
+                    .catch { _ in Just(.cancel) }
+                    .eraseToAnyPublisher()
             )
+        )
     }
+}
 
-    public func result<T: Equatable>(_ keyPath: KeyPath<State, AsyncResult<T>>) -> AnySingleValuePublisher<T, Never> {
-        let prevCount = state[keyPath: keyPath].count
-        return self.$state
-            .map { $0[keyPath: keyPath] }
-            .removeDuplicates()
-            .first { ($0.count > prevCount) && ($0.value != nil) }
-            .compactMap { $0.value }
-            .eraseType()
-    }
-
-    // MARK: - AnyStore
-
+extension StateStore: AnyStore {
     public var value: AnyPublisher<PublishedValue, Cancel> {
         publishedValue
             .receive(on: DispatchQueue.main)
             .eraseToAnyPublisher()
     }
-
+    
     public func publish(_ value: PublishedValue) {
         send(.publish(value))
     }
-
+    
     public func cancel() {
         send(.cancel)
     }
@@ -694,9 +455,11 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
     public func hash(into hasher: inout Hasher) {
         ObjectIdentifier(self).hash(into: &hasher)
     }
-    
-    // Mark: - Logging
-    
+}
+
+// MARK: -  Snapshots and Logging
+
+extension StateStore {
     public struct LogConfig {
         public var logState = false
         public var logActions = false
@@ -735,8 +498,8 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
         
         public struct Output {
             let date: Date
-            let effect: Reducer.Effect?
-            let syncEffect: Reducer.SyncEffect?
+            let effect: Effect?
+            let syncEffect: SyncEffect?
             let state: State
             let nestedLevel: Int
 
@@ -765,7 +528,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
             switch self {
             case .input(let input):
                 let mutatingAction: MutatingAction?
-                switch input.action.stateAction {
+                switch input.action.action {
                 case .mutating(let action, _, _):
                     mutatingAction = action
                 default:
@@ -814,5 +577,126 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject, AnyStore {
                 return false
             }
         }
+    }
+    
+    private func clearSnapshots() {
+        codeStringSnapshots = []
+    }
+    
+    @MainActor
+    public func saveSnapshotsIfNeeded() {
+        guard logConfig.saveSnapshots else { return }
+        let snapshotCollection = ReducerSnapshotCollection(title: identifier, snapshots: codeStringSnapshots)
+        do {
+            if let path = try snapshotCollection.save() {
+                logger.info("Saved reducer snapshots to \n\(path)")
+                clearSnapshots()
+            }
+            else {
+                logger.error("Failed to save snapshots.")
+            }
+        }
+        catch {
+            logger.error(message: "Failed to save snapshots.", error)
+        }
+    }
+}
+
+extension StateStore.Action: Codable
+where Nsp.MutatingAction: Codable, Nsp.EffectAction: Codable, Nsp.PublishedValue: Codable {
+    public enum Base: Codable {
+        case mutating(Nsp.MutatingAction)
+        case effect(Nsp.EffectAction)
+        case publish(Nsp.PublishedValue)
+        case cancel
+        case none
+        
+        init(_ value: StateStore.Action) {
+            switch value {
+            case .mutating(let action, _, _):
+                self = .mutating(action)
+            case .effect(let action):
+                self = .effect(action)
+            case .publish(let value):
+                self = .publish(value)
+            case .cancel:
+                self = .cancel
+            case .none:
+                self = .none
+            }
+        }
+    }
+    
+    init(_ value: Base) {
+        switch value {
+        case .mutating(let action):
+            self = .mutating(action)
+        case .effect(let action):
+            self = .effect(action)
+        case .publish(let value):
+            self = .publish(value)
+        case .cancel:
+            self = .cancel
+        case .none:
+            self = .none
+            
+        }
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        try Base(self).encode(to: encoder)
+    }
+    
+    public init(from decoder: Decoder) throws {
+        self = try .init(Base.init(from: decoder))
+    }
+}
+
+extension StateStore.Action: Equatable
+where Nsp.MutatingAction: Equatable, Nsp.EffectAction: Equatable, Nsp.PublishedValue: Equatable {
+}
+
+extension StateStore.StoreAction: Equatable where StateStore.Action: Equatable {
+}
+
+extension StateStore.StoreAction: Codable where StateStore.Action: Codable {
+}
+
+extension StateStore.Effect where StateStore.Action: Equatable {
+    func isEqual(to other: Self) -> Bool? {
+        switch (self, other) {
+        case let (.action(action), .action(otherAction)):
+            return action == otherAction
+        case let (.actions(actions), .actions(otherActions)):
+            return actions == otherActions
+        case (.asyncAction, .asyncAction):
+            return nil
+        case (.asyncActions, .asyncActions):
+            return nil
+        case (.asyncActionSequence, .asyncActionSequence):
+            return nil
+        case (.publisher, .publisher):
+            return nil
+        case (.none, .none):
+            return true
+        default:
+            if codeString(self) == codeString(other) { // maybe unknown new case
+                return nil
+            }
+            return false
+        }
+    }
+}
+
+extension StateStore.SyncEffect: Codable where StateStore.Action: Codable {
+}
+
+extension StateStore.SyncEffect: Equatable where StateStore.Action: Equatable {
+}
+
+extension StateStore.Reducer where Nsp.EffectAction == Never {
+    @MainActor
+    public init(_ run: @escaping (inout Value, Nsp.MutatingAction) -> StateStore.SyncEffect) {
+        self = StateStore.Reducer(run: run, effect: { _, _, effectAction in .none })
     }
 }

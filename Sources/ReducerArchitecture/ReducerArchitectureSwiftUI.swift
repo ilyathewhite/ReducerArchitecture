@@ -43,37 +43,37 @@ public extension StateStore {
 }
 
 public protocol StoreContentView: View {
-    associatedtype StoreWrapper: StoreNamespace
-    typealias Store = StoreWrapper.Store
+    associatedtype Nsp: StoreNamespace
+    typealias Store = Nsp.Store
     var store: Store { get }
     init(store: Store)
 }
 
-public protocol StoreUIWrapper: StoreNamespace {
-    associatedtype ContentView: StoreContentView where ContentView.StoreWrapper == Self
+public protocol StoreUINamespace: StoreNamespace {
+    associatedtype ContentView: StoreContentView where ContentView.Nsp == Self
 }
 
-public protocol StoreUIContainer<UIWrapper>: Hashable, Identifiable {
-    associatedtype UIWrapper: StoreUIWrapper
-    var store: UIWrapper.Store { get }
-    init(_ store: UIWrapper.Store)
+public protocol StoreUIContainer<Nsp>: Hashable, Identifiable {
+    associatedtype Nsp: StoreUINamespace
+    var store: Nsp.Store { get }
+    init(_ store: Nsp.Store)
 }
 
 extension StoreUIContainer {
     public func makeView() -> some View {
-        UIWrapper.ContentView(store: store)
+        Nsp.ContentView(store: store)
     }
     
     public func makeAnyView() -> AnyView {
         AnyView(makeView())
     }
     
-    public var id: UIWrapper.Store.ID {
+    public var id: Nsp.Store.ID {
         store.id
     }
     
     @MainActor
-    public var value: UIWrapper.Store.ValuePublisher {
+    public var value: Nsp.Store.ValuePublisher {
         store.value
     }
     
@@ -83,14 +83,14 @@ extension StoreUIContainer {
     }
 }
 
-public struct StoreUI<UIWrapper: StoreUIWrapper>: StoreUIContainer {
-    public static func == (lhs: StoreUI<UIWrapper>, rhs: StoreUI<UIWrapper>) -> Bool {
+public struct StoreUI<Nsp: StoreUINamespace>: StoreUIContainer {
+    public static func == (lhs: StoreUI<Nsp>, rhs: StoreUI<Nsp>) -> Bool {
         lhs.store === rhs.store
     }
     
-    public let store: UIWrapper.Store
+    public let store: Nsp.Store
 
-    public init(_ store: UIWrapper.Store) {
+    public init(_ store: Nsp.Store) {
         self.store = store
     }
 }

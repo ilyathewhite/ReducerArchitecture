@@ -30,7 +30,7 @@ public extension NavigationEnv {
 }
 
 @MainActor
-public struct NavigationNode<T: StoreUIWrapper> {
+public struct NavigationNode<T: StoreUINamespace> {
     let store: T.Store
     let env: NavigationEnv
     
@@ -65,7 +65,7 @@ import SwiftUI
 
 @available(iOS 16.0, *)
 @available(macOS 13.0, *)
-public struct NavigationFlow<T: StoreUIWrapper>: View {
+public struct NavigationFlow<T: StoreUINamespace>: View {
     let root: T.Store
     let run: (T.PublishedValue, _ env: NavigationEnv) async -> Void
     
@@ -79,7 +79,7 @@ public struct NavigationFlow<T: StoreUIWrapper>: View {
     func addNavigation(_ storeUI: some StoreUIContainer) -> AnyView {
         AnyView(
             EmptyView()
-                .addNavigation(type(of: storeUI).UIWrapper.self)
+                .addNavigation(type(of: storeUI).Nsp.self)
         )
     }
 
@@ -184,14 +184,14 @@ public class NavigationPathContainer: ObservableObject {
 @available(iOS 16.0, *)
 @available(macOS 13.0, *)
 public extension NavigationPath {
-    mutating func push<T: StoreUIWrapper>(_ storeUI: StoreUI<T>) {
+    mutating func push<T: StoreUINamespace>(_ storeUI: StoreUI<T>) {
         append(storeUI)
     }
 }
 
 @available(iOS 16.0, *)
 @available(macOS 13.0, *)
-public struct AddNavigation<T: StoreUIWrapper>: ViewModifier {
+public struct AddNavigation<T: StoreUINamespace>: ViewModifier {
     let type: T.Type
     
     public func body(content: Content) -> some View {
@@ -204,7 +204,7 @@ public struct AddNavigation<T: StoreUIWrapper>: ViewModifier {
 @available(iOS 16.0, *)
 @available(macOS 13.0, *)
 public extension View {
-    func addNavigation<T: StoreUIWrapper>(_ type: T.Type) -> some View {
+    func addNavigation<T: StoreUINamespace>(_ type: T.Type) -> some View {
         self.modifier(AddNavigation(type: type))
     }
 }
