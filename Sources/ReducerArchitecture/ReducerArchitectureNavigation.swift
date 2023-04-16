@@ -13,6 +13,11 @@ public struct NavigationEnv {
     /// Pushes the next UI component on the navigation stack.
     /// Returns the index of the pushed component on the navigation stack.
     public let push: @MainActor (any StoreUIContainer & Hashable) -> Int
+    
+    /// Pushes the next VC on the navigation stack.
+    /// Supported only for UIKit navigation.
+    /// Returns the index of the pushed component on the navigation stack.
+    public let pushVC: @MainActor (any BasicReducerArchitectureVC) -> Int
 
     /// Replaces the last UI component on the navigation stack.
     /// Returns the index of the pushed component on the navigation stack.
@@ -52,10 +57,23 @@ public struct NavigationNode<T: StoreUINamespace> {
             await callback(value, index)
         }
     }
+}
 
-    func thenPopToRoot() async {
-        await store.get { _ in
-            env.popToRoot()
+@MainActor
+public struct NavigationVCNode<VC: BasicReducerArchitectureVC> {
+    let config: VC.Configuration
+    let env: NavigationEnv
+    
+    public init(_ config: VC.Configuration, _ env: NavigationEnv) {
+        self.config = config
+        self.env = env
+    }
+    
+    public func then(_ callback: @escaping (VC.Store.PublishedValue, Int) async -> Void) async {
+        let vc = VC.make(config)
+        let index = env.pushVC(vc)
+        await vc.store.get { value in
+            await callback(value, index)
         }
     }
 }
@@ -221,6 +239,10 @@ extension NavigationEnv {
             pathContainer.push($0)
         }
         
+        pushVC = { _ in
+            fatalError("Not supported for SwiftUI")
+        }
+        
         replaceTop = {
             pathContainer.replaceTop(newValue: $0)
         }
@@ -249,6 +271,11 @@ extension NavigationEnv {
         push = {
             let vc = Self.hostingVC($0)
             nc.pushViewController(vc, animated: true)
+            return nc.viewControllers.count - 1
+        }
+        
+        pushVC = {
+            nc.pushViewController($0, animated: true)
             return nc.viewControllers.count - 1
         }
         

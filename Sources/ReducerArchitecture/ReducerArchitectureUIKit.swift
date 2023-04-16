@@ -15,7 +15,10 @@ import CombineEx
 
 public protocol BasicReducerArchitectureVC: UIViewController {
     associatedtype Store: AnyStore
+    associatedtype Configuration
+
     var store: Store { get }
+    static func make(_ configuration: Configuration) -> Self
 }
 
 public extension BasicReducerArchitectureVC {
