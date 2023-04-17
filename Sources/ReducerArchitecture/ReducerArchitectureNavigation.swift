@@ -64,7 +64,7 @@ public struct NavigationVCNode<VC: BasicReducerArchitectureVC> {
     let config: VC.Configuration
     let env: NavigationEnv
     
-    public init(_ config: VC.Configuration, _ env: NavigationEnv) {
+    public init(config: VC.Configuration, env: NavigationEnv) {
         self.config = config
         self.env = env
     }

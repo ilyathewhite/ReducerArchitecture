@@ -141,7 +141,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     public enum Effect {
         case action(Action)
         case actions([Action])
-        case asyncAction(() async -> Action?)
+        case asyncAction(() async -> Action)
         case asyncActions(() async -> [Action])
         case asyncActionSequence(() -> AsyncStream<Action>)
         case publisher(AnyPublisher<Action, Never>)
@@ -216,9 +216,8 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
         case .asyncAction(let f):
             Task {
                 await taskManager.addTask { [weak self] in
-                    if let action = await f() {
-                        self?.send(.code(action))
-                    }
+                    let action = await f()
+                    self?.send(.code(action))
                 }
             }
             
@@ -434,6 +433,10 @@ extension StateStore: AnyStore {
         publishedValue
             .receive(on: DispatchQueue.main)
             .eraseToAnyPublisher()
+    }
+    
+    public func firstValue() async throws -> PublishedValue {
+        try await value.first().async()
     }
     
     public func publish(_ value: PublishedValue) {
