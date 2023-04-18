@@ -40,6 +40,35 @@ public extension BasicReducerArchitectureVC {
     }
 }
 
+public class ContainerVC: UIViewController {
+    let vc: any BasicReducerArchitectureVC
+    
+    init(vc: any BasicReducerArchitectureVC) {
+        self.vc = vc
+        super.init(nibName: nil, bundle: nil)
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override public func viewDidLoad() {
+        super.viewDidLoad()
+        
+        addChild(vc)
+        view.addSubview(vc.view)
+        vc.didMove(toParent: self)
+        vc.view.align(toContainerView: view)
+    }
+    
+    override public func didMove(toParent parent: UIViewController?) {
+        super.didMove(toParent: parent)
+        if parent == nil {
+            vc.store.cancel()
+        }
+    }
+}
+
 public class HostingController<T: StoreUINamespace>: UIHostingController<T.ContentView> {
     public let store: T.Store
     
@@ -56,6 +85,16 @@ public class HostingController<T: StoreUINamespace>: UIHostingController<T.Conte
         if parent == nil {
             store.cancel()
         }
+    }
+}
+
+extension UIView {
+    func align(toContainerView view: UIView) {
+        translatesAutoresizingMaskIntoConstraints = false
+        view.leftAnchor.constraint(equalTo: leftAnchor).isActive = true
+        view.rightAnchor.constraint(equalTo: rightAnchor).isActive = true
+        view.topAnchor.constraint(equalTo: topAnchor).isActive = true
+        view.bottomAnchor.constraint(equalTo: bottomAnchor).isActive = true
     }
 }
 
