@@ -78,6 +78,10 @@ public extension AnyStore {
             .values
     }
     
+    func get(callback: @escaping (PublishedValue) async throws -> Void) async throws {
+        try await asyncValues.get(callback: callback)
+    }
+    
     func get(callback: @escaping (PublishedValue) async -> Void) async {
         await asyncValues.get(callback: callback)
     }
@@ -86,6 +90,11 @@ public extension AnyStore {
         if let firstValue = try? await value.first().async() {
             await callback(firstValue)
         }
+    }
+    
+    func getFirst(callback: @escaping (PublishedValue) async throws -> Void) async throws {
+        let firstValue = try await value.first().async()
+        try await callback(firstValue)
     }
 }
 

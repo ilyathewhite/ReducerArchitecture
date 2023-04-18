@@ -43,11 +43,25 @@ public struct NavigationNode<T: StoreUINamespace> {
         self.store = store
         self.env = env
     }
-    
+
+    public func then(_ callback: @escaping (T.Store.PublishedValue, Int) async throws -> Void) async throws {
+        let index = env.push(StoreUI(store))
+        try await store.get { value in
+            try await callback(value, index)
+        }
+    }
+
     public func then(_ callback: @escaping (T.Store.PublishedValue, Int) async -> Void) async {
         let index = env.push(StoreUI(store))
         await store.get { value in
             await callback(value, index)
+        }
+    }
+
+    public func thenReplacingTop(_ callback: @escaping (T.Store.PublishedValue, Int) async throws -> Void) async throws {
+        let index = env.replaceTop(StoreUI(store))
+        try await store.get { value in
+            try await callback(value, index)
         }
     }
 
@@ -67,6 +81,14 @@ public struct NavigationVCNode<VC: BasicReducerArchitectureVC> {
     public init(config: VC.Configuration, env: NavigationEnv) {
         self.config = config
         self.env = env
+    }
+    
+    public func then(_ callback: @escaping (VC.Store.PublishedValue, Int) async throws -> Void) async throws {
+        let vc = VC.make(config)
+        let index = env.pushVC(vc)
+        try await vc.store.get { value in
+            try await callback(value, index)
+        }
     }
     
     public func then(_ callback: @escaping (VC.Store.PublishedValue, Int) async -> Void) async {
