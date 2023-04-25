@@ -68,4 +68,12 @@ extension <#StoreNsp#>: StoreUINamespace {
         }
     }
 }
+ 
+struct <#Nsp#>_Previews: PreviewProvider {
+    static let store = <#Nsp#>.store()
+ 
+    static var previews: some View {
+        <#Nsp#>.ContentView(store: store)
+    }
+}
 */
