@@ -50,9 +50,16 @@ public extension StoreNamespace {
 public protocol AnyStore: AnyObject, Hashable, Identifiable {
     associatedtype PublishedValue
 
+    var identifier: String { get }
+    var isCancelled: Bool { get }
     var value: AnyPublisher<PublishedValue, Cancel> { get }
     func publish(_ value: PublishedValue)
     func cancel()
+    
+    /// Indicates whether there is request for a published value.
+    ///
+    /// Useful for testing navigation flows.
+    var hasRequest: Bool { get }
 }
 
 public extension AnyStore {
@@ -73,7 +80,8 @@ public extension AnyStore {
     }
 
     var asyncValues: AsyncPublisher<AnyPublisher<PublishedValue, Never>> {
-        value.catch { _ in Empty<PublishedValue, Never>() }
+        value
+            .catch { _ in Empty<PublishedValue, Never>() }
             .eraseToAnyPublisher()
             .values
     }
@@ -193,6 +201,8 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     
     @Published public private(set) var state: State
     private var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
+    public private(set) var isCancelled = false
+    public private(set) var hasRequest = false
     
     public init(_ identifier: String, _ initialValue: State, reducer: Reducer, env: Environment?) {
         self.identifier = identifier
@@ -271,6 +281,11 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     }
     
     private func send(_ storeAction: StoreAction) {
+        guard !isCancelled else {
+            logger.error("Tried to send action \n\(codeString(storeAction))\n to store \(self.identifier) that is already cancelled.")
+            return
+        }
+        
         var reducerInput = "\nreducer input:"
         if logConfig.logActions {
             reducerInput.append("\n\n\(codeString(storeAction))")
@@ -334,6 +349,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             
         case .cancel:
             publishedValue.send(completion: .failure(.cancel))
+            isCancelled = true
             syncEffect = nil
             effect = nil
             
@@ -440,6 +456,17 @@ public extension StateStore {
 extension StateStore: AnyStore {
     public var value: AnyPublisher<PublishedValue, Cancel> {
         publishedValue
+            .handleEvents(
+                receiveOutput: { [weak self] _ in
+                    assert(Thread.isMainThread)
+                    self?.hasRequest = false
+                },
+                receiveRequest: { [weak self] demand in
+                    assert(Thread.isMainThread)
+                    self?.hasRequest = true
+                }
+            )
+            .subscribe(on: DispatchQueue.main)
             .receive(on: DispatchQueue.main)
             .eraseToAnyPublisher()
     }

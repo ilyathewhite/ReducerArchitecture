@@ -120,7 +120,12 @@ public extension View {
     @MainActor
     func showUI<C: StoreUIContainer>(_ keyPath: KeyPath<Self, C?>) -> Binding<Bool> {
         .init(
-            get: { self[keyPath: keyPath] != nil },
+            get: {
+                guard let storeUI = self[keyPath: keyPath] else {
+                    return false
+                }
+                return !storeUI.store.isCancelled
+            },
             set: { show in
                 if !show {
                     self[keyPath: keyPath]?.cancel()

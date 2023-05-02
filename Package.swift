@@ -26,6 +26,20 @@ let package = Package(
                 "-Xfrontend",
                 "-warn-long-expression-type-checking=100"
             ])]
+        ),
+        .target(
+            name: "Shared",
+            dependencies: ["CombineEx", "ReducerArchitecture"],
+            swiftSettings: [.unsafeFlags([
+                "-Xfrontend",
+                "-warn-long-function-bodies=100",
+                "-Xfrontend",
+                "-warn-long-expression-type-checking=100"
+            ])]
+        ),
+        .testTarget(
+            name: "NavigationTests",
+            dependencies: ["ReducerArchitecture", "Shared"]
         )
     ]
 )
