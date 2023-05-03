@@ -56,7 +56,8 @@ final class AppFlowTest: XCTestCase {
         await resultStore.publishOnRequest(())
 
         // verify root
-        let _ = try await env.getStore(StringPicker.self, &timeIndex)
+        let _rootStore = try await env.getStore(StringPicker.self, &timeIndex)
+        XCTAssertEqual(rootStore, _rootStore)
 
         await flowTask.value
     }
@@ -105,7 +106,8 @@ final class AppFlowTest: XCTestCase {
         await resultStore.publishOnRequest(())
         
         // verify root
-        let _ = try await env.getStore(StringPicker.self, &timeIndex)
+        let _rootStore = try await env.getStore(StringPicker.self, &timeIndex)
+        XCTAssertEqual(rootStore, _rootStore)
 
         await flowTask.value
     }
@@ -132,7 +134,8 @@ final class AppFlowTest: XCTestCase {
         env.backAction()
         
         // verify root
-        let _ = try await env.getStore(StringPicker.self, &timeIndex)
+        let _rootStore = try await env.getStore(StringPicker.self, &timeIndex)
+        XCTAssertEqual(rootStore, _rootStore)
 
         await flowTask.value
     }
@@ -184,7 +187,8 @@ final class AppFlowTest: XCTestCase {
         await resultStore.publishOnRequest(())
 
         // verify root
-        let _ = try await env.getStore(StringPicker.self, &timeIndex)
+        let _rootStore = try await env.getStore(StringPicker.self, &timeIndex)
+        XCTAssertEqual(rootStore, _rootStore)
 
         await flowTask.value
     }
@@ -278,7 +282,8 @@ final class AppFlowTest: XCTestCase {
         await resultStore2.publishOnRequest(())
 
         // verify root
-        let _ = try await env.getStore(StringPicker.self, &timeIndex)
+        let _rootStore = try await env.getStore(StringPicker.self, &timeIndex)
+        XCTAssertEqual(rootStore, _rootStore)
 
         await flowTask.value
     }
