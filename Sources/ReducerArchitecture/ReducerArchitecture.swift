@@ -52,20 +52,33 @@ public protocol AnyStore: AnyObject, Hashable, Identifiable {
 
     var identifier: String { get }
     var isCancelled: Bool { get }
-    var value: AnyPublisher<PublishedValue, Cancel> { get }
+    var publishedValue: PassthroughSubject<PublishedValue, Cancel> { get }
     func publish(_ value: PublishedValue)
     func cancel()
     
     /// Indicates whether there is request for a published value.
     ///
     /// Useful for testing navigation flows.
-    var hasRequest: Bool { get }
+    var hasRequest: Bool { get set }
 }
 
+// value, publish, cancel
 public extension AnyStore {
-    nonisolated
-    var id: ObjectIdentifier {
-        ObjectIdentifier(self)
+    var value: AnyPublisher<PublishedValue, Cancel> {
+        publishedValue
+            .handleEvents(
+                receiveOutput: { [weak self] _ in
+                    assert(Thread.isMainThread)
+                    self?.hasRequest = false
+                },
+                receiveRequest: { [weak self] demand in
+                    assert(Thread.isMainThread)
+                    self?.hasRequest = true
+                }
+            )
+            .subscribe(on: DispatchQueue.main)
+            .receive(on: DispatchQueue.main)
+            .eraseToAnyPublisher()
     }
     
     var valueResult: AnyPublisher<Result<PublishedValue, Cancel>, Never> {
@@ -75,6 +88,49 @@ public extension AnyStore {
             .eraseToAnyPublisher()
     }
     
+    func firstValue() async throws -> PublishedValue {
+        try await value.first().async()
+    }
+    
+    func publish(_ value: PublishedValue) {
+        if isStateStore  {
+            assertionFailure()
+        }
+        publishedValue.send(value)
+    }
+    
+    func cancel() {
+        if isStateStore  {
+            assertionFailure()
+        }
+        publishedValue.send(completion: .failure(.cancel))
+    }
+    
+    var isStateStore: Bool {
+        "\(type(of: self))".hasPrefix("StateStore<")
+    }
+}
+
+// Identifiable, Hashable
+public extension AnyStore {
+    nonisolated
+    var id: ObjectIdentifier {
+        ObjectIdentifier(self)
+    }
+    
+    nonisolated
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs === rhs
+    }
+    
+    nonisolated
+    func hash(into hasher: inout Hasher) {
+        ObjectIdentifier(self).hash(into: &hasher)
+    }
+}
+
+// Navigation
+public extension AnyStore {
     var throwingAsyncValues: AsyncThrowingPublisher<AnyPublisher<PublishedValue, Cancel>> {
         value.values
     }
@@ -200,9 +256,9 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     private var codeStringSnapshots: [ReducerSnapshotData] = []
     
     @Published public private(set) var state: State
-    private var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
+    public private(set) var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
     public private(set) var isCancelled = false
-    public private(set) var hasRequest = false
+    public var hasRequest = false
     
     public init(_ identifier: String, _ initialValue: State, reducer: Reducer, env: Environment?) {
         self.identifier = identifier
@@ -445,7 +501,7 @@ public extension StateStore {
     {
         addEffect(
             .publisher(
-                otherStore.publishedValue.map { action($0) }
+                otherStore.value.map { action($0) }
                     .catch { _ in Just(.cancel) }
                     .eraseToAnyPublisher()
             )
@@ -454,45 +510,12 @@ public extension StateStore {
 }
 
 extension StateStore: AnyStore {
-    public var value: AnyPublisher<PublishedValue, Cancel> {
-        publishedValue
-            .handleEvents(
-                receiveOutput: { [weak self] _ in
-                    assert(Thread.isMainThread)
-                    self?.hasRequest = false
-                },
-                receiveRequest: { [weak self] demand in
-                    assert(Thread.isMainThread)
-                    self?.hasRequest = true
-                }
-            )
-            .subscribe(on: DispatchQueue.main)
-            .receive(on: DispatchQueue.main)
-            .eraseToAnyPublisher()
-    }
-    
-    public func firstValue() async throws -> PublishedValue {
-        try await value.first().async()
-    }
-    
     public func publish(_ value: PublishedValue) {
         send(.publish(value))
     }
     
     public func cancel() {
         send(.cancel)
-    }
-    
-    // Hashable
-    
-    nonisolated
-    public static func == (lhs: StateStore, rhs: StateStore) -> Bool {
-        lhs === rhs
-    }
-    
-    nonisolated
-    public func hash(into hasher: inout Hasher) {
-        ObjectIdentifier(self).hash(into: &hasher)
     }
 }
 

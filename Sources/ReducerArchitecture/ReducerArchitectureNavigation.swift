@@ -362,36 +362,16 @@ extension NavigationEnv {
         storeUI.store
     }
     
-    static func getStore(_ container: some HostingControllerProtocol) -> any AnyStore {
+    static func getStore(_ container: some BasicReducerArchitectureVC) -> any AnyStore {
         container.store
     }
-    
+
     @MainActor
     public init(
         _ nc: UINavigationController,
         replaceLastWith: @escaping (UINavigationController, UIViewController) -> Void,
         hostingControllerContainer: @escaping () -> UIViewController? = { nil }
     ) {
-        func getStore(_ vc: UIViewController) -> (any AnyStore)? {
-            var _hostingVC: UIViewController
-            if hostingControllerContainer() != nil {
-                guard let __hostingVC = vc.children.last else {
-                    assertionFailure()
-                    return nil
-                }
-                _hostingVC = __hostingVC
-            }
-            else {
-                _hostingVC = vc
-            }
-            guard let hostingVC = _hostingVC as? any HostingControllerProtocol else {
-                assertionFailure()
-                return nil
-            }
-            
-            return Self.getStore(hostingVC)
-        }
-        
         self.init(
             currentIndex: {
                 nc.viewControllers.count - 1
@@ -440,11 +420,7 @@ extension NavigationEnv {
             case .storeUI(let storeUI):
                 return NavigationEnv.getStore(storeUI)
             case .vc(let vc):
-                guard let hostingVC = vc as? any HostingControllerProtocol else {
-                    assertionFailure()
-                    return nil
-                }
-                return NavigationEnv.getStore(hostingVC)
+                return NavigationEnv.getStore(vc)
             }
         }
     }
@@ -465,7 +441,20 @@ extension NavigationEnv {
         timeIndex += 1
         return store
     }
-    
+
+    /// Returns the store of a particular type for a given time index.
+    ///
+    /// Used only for testing.
+    @MainActor
+    public func getStore<T: AnyStore>(_ type: T.Type, _ timeIndex: inout Int) async throws -> T {
+        let value = await currentStorePublisher.values.first(where: { $0.timeIndex == timeIndex })
+        guard let store = value?.store as? T else {
+            throw CurrentStoreError.typeMismatch
+        }
+        timeIndex += 1
+        return store
+    }
+
     @MainActor
     /// Used only for testing.
     public func backAction() {
@@ -474,15 +463,6 @@ extension NavigationEnv {
     
     @MainActor
     public static func testEnv() -> NavigationEnv {
-        func getStore(_ vc: UIViewController) -> (any AnyStore)? {
-            guard let hostingVC = vc as? any HostingControllerProtocol else {
-                assertionFailure()
-                return nil
-            }
-            
-            return Self.getStore(hostingVC)
-        }
-        
         let currentStorePublisher: CurrentValueSubject<StoreInfo, Never> = .init(StoreInfo.placeholder)
         var stack: [NavigationTestNode] = []
         

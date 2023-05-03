@@ -69,12 +69,7 @@ public class ContainerVC: UIViewController {
     }
 }
 
-public protocol HostingControllerProtocol: UIViewController {
-    associatedtype T: StoreUINamespace
-    var store: T.Store { get }
-}
-
-public class HostingController<T: StoreUINamespace>: UIHostingController<T.ContentView>, HostingControllerProtocol {
+public class HostingController<T: StoreUINamespace>: UIHostingController<T.ContentView> {
     public let store: T.Store
     
     public init(store: T.Store) {
@@ -104,4 +99,3 @@ extension UIView {
 }
 
 #endif
-
