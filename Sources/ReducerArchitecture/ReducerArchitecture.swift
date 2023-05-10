@@ -30,6 +30,7 @@ public protocol StoreNamespace {
 }
 
 extension StoreNamespace {
+    public typealias Nsp = Self
     public typealias Store = StateStore<Self>
     public typealias Reducer = Store.Reducer
     
@@ -342,15 +343,14 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             return
         }
         
-        var reducerInput = "\nreducer input:"
+        var reducerInput = ""
         if logConfig.logActions {
-            reducerInput.append("\n\n\(codeString(storeAction))")
+            reducerInput.append("\n->\n\(codeString(storeAction))")
         }
         if logConfig.logState {
-            reducerInput.append("\n\n\(codeString(state))")
+            reducerInput.append("\n->\n\(codeString(state))")
         }
-        if logConfig.logEnabled {
-            reducerInput.append("\n\n")
+        if logConfig.logActions || logConfig.logState {
             logger.debug("\(reducerInput)")
         }
         
@@ -371,12 +371,9 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             }
             effect = syncEffect.map { .init($0) }
             
-            var reducerStateChange = "\nreducer state change:"
             if logConfig.logState {
-                reducerStateChange.append("\n\n\(codeString(state))")
-            }
-            if logConfig.logEnabled {
-                reducerStateChange.append("\n\n")
+                var reducerStateChange = "\n<-"
+                reducerStateChange.append("\n\(codeString(state))")
                 logger.debug("\(reducerStateChange)")
             }
             
@@ -414,12 +411,9 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             effect = nil
         }
         
-        var reducerOutput = "\nreducer output:"
         if logConfig.logActions {
-            reducerOutput.append("\n\n\(codeString(effect))")
-        }
-        if logConfig.logEnabled {
-            reducerOutput.append("\n\n")
+            var reducerOutput = "\n<-"
+            reducerOutput.append("\n\(codeString(effect))")
             logger.debug("\(reducerOutput)")
         }
         
