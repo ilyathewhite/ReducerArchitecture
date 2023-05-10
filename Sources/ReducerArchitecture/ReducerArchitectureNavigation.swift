@@ -265,7 +265,7 @@ public class NavigationPathContainer: ObservableObject {
             internalChange = false
         }
 
-        guard index < stack.count else {
+        guard -1 <= index, index < stack.count else {
             assertionFailure()
             return
         }
@@ -501,6 +501,10 @@ extension NavigationEnv {
                 return stack.count - 1
             },
             popTo: { index in
+                guard -1 <= index, index < stack.count else {
+                    assertionFailure()
+                    return
+                }
                 let k = stack.count - 1 - index
                 // cancel order should be in reverse of push order
                 var valuesToCancel: [any AnyStore] = []
