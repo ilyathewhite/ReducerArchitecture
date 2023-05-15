@@ -204,6 +204,43 @@ public struct NavigationFlow<T: StoreUINamespace>: View {
     }
 }
 
+/// Same as NavigationFlow, but uses UINavigationController for navigation.
+///
+/// This is a workaround for nested navigation stacks that don't seem to be supported in SwiftUI right now.
+public struct UIKitNavigationFlow<T: StoreUINamespace>: UIViewControllerRepresentable {
+    public let root: T.Store
+    public let run: (T.PublishedValue, _ env: NavigationEnv) async -> Void
+    
+    public init(root: T.Store, run: @escaping (T.PublishedValue, _: NavigationEnv) async -> Void) {
+        self.root = root
+        self.run = run
+    }
+
+    public init(root: T.Store) {
+        self.root = root
+        self.run = { _, _ in }
+    }
+
+    public func makeUIViewController(context: Context) -> UINavigationController {
+        let nc = UINavigationController()
+        
+        let rootView = T.ContentView(store: root)
+            .task {
+                let env = NavigationEnv(nc, replaceLastWith: { _, _  in })
+                await root.get { value in
+                    await run(value, env)
+                }
+            }
+
+        let rootVC = UIHostingController(rootView: rootView)
+        nc.viewControllers = [rootVC]
+        return nc
+    }
+    
+    public func updateUIViewController(_ nc: UINavigationController, context: Context) {
+    }
+}
+
 @available(iOS 16.0, *)
 @available(macOS 13.0, *)
 @MainActor
