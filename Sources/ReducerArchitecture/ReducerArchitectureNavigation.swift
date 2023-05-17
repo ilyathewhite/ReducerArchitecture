@@ -223,15 +223,14 @@ public struct UIKitNavigationFlow<T: StoreUINamespace>: UIViewControllerRepresen
 
     public func makeUIViewController(context: Context) -> UINavigationController {
         let nc = UINavigationController()
+        Task {
+            let env = NavigationEnv(nc, replaceLastWith: { _, _  in })
+            await root.get { value in
+                await run(value, env)
+            }
+        }
         
         let rootView = T.ContentView(store: root)
-            .task {
-                let env = NavigationEnv(nc, replaceLastWith: { _, _  in })
-                await root.get { value in
-                    await run(value, env)
-                }
-            }
-
         let rootVC = UIHostingController(rootView: rootView)
         nc.viewControllers = [rootVC]
         return nc
