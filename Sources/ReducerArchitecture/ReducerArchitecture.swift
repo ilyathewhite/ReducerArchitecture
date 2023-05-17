@@ -339,7 +339,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     
     private func send(_ storeAction: StoreAction) {
         guard !isCancelled else {
-            logger.error("Tried to send action \n\(codeString(storeAction))\n to store \(self.identifier) that is already cancelled.")
+            logger.error("\nReceived action \n\(codeString(storeAction))\nto a store that is already cancelled.")
             return
         }
         
