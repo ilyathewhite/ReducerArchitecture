@@ -104,7 +104,7 @@ extension StateStore {
 extension AppSettingsNsp {
     @MainActor
     public static func store() -> Store {
-        Store(identifier, .init(), reducer: reducer())
+        Store(.init(), reducer: reducer())
     }
     
     @MainActor

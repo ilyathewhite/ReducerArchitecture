@@ -40,18 +40,15 @@ extension StoreNamespace {
     }
 }
 
-public extension StoreNamespace {
-    static var identifier: String {
-        "\(Self.self)"
-    }
-}
+/// Logs store allocation, cancellation, and deallocation. The default is `false`.
+public var logStoreLifecycle = false
 
 @MainActor
 // Conformance to Hashable is necessary for SwiftUI navigation
 public protocol AnyStore: AnyObject, Hashable, Identifiable {
     associatedtype PublishedValue
 
-    var identifier: String { get }
+    nonisolated var id: UUID { get }
     var isCancelled: Bool { get }
     var publishedValue: PassthroughSubject<PublishedValue, Cancel> { get }
     func publish(_ value: PublishedValue)
@@ -114,19 +111,12 @@ public extension AnyStore {
 
 // Identifiable, Hashable
 public extension AnyStore {
-    nonisolated
-    var id: ObjectIdentifier {
-        ObjectIdentifier(self)
-    }
-    
-    nonisolated
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs === rhs
     }
     
-    nonisolated
     func hash(into hasher: inout Hasher) {
-        ObjectIdentifier(self).hash(into: &hasher)
+        id.hash(into: &hasher)
     }
 }
 
@@ -245,12 +235,65 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
         }
     }
     
-    public var identifier: String
+    public let id = UUID()
     private var nestedLevel = 0
     
     public var environment: Environment?
     internal let reducer: Reducer
     private let taskManager = TaskManager()
+    
+    private var children: [String: any AnyStore] = [:]
+    
+    /// The default store key. The value is used for child stores and for logging.
+    ///
+    /// Uses the store namespace description as the default key because it's unlikely for a parent store to contain
+    /// more than one child store of the same type.
+    nonisolated
+    public static var storeDefaultKey: String { "\(Nsp.self)" }
+    
+    /// Adds a child to the store. The store must not already contain a child with the provided `key`.
+    public func addChild<T>(_ child: StateStore<T>, key: String = StateStore<T>.storeDefaultKey) {
+        assert(children[key] == nil)
+        children[key] = child
+    }
+
+    /// Adds a child to the store. If the store already contains a child with the provided `key`, the child store
+    /// expression is not evaluated.
+    public func addChildIfNeeded<T>(_ child: @autoclosure () -> StateStore<T>, key: String = StateStore<T>.storeDefaultKey) {
+        if children[key] == nil {
+            children[key] = child()
+        }
+    }
+
+    /// Returns a child store with a specific `key`.
+    ///
+    /// A child store should not be saved in `@State` or `@ObjectState` of a view because that creates a retain cycle:
+    /// View State -> Store -> Store Environmemnt -> View State or
+    /// Child View State -> Child Store -> Child Store Environment -> Child View State
+    /// The retain cycle is there even with @ObservedObject because then SwiftUI View State still adds a reference to
+    /// the store.
+    ///
+    /// The only way to break the retain cycle is to set the store environment to nil by cancelling the store. (Setting
+    /// the store environment to nil directly is dangerous because the store might still receive messages after that but
+    /// when the store is cancelled those messages are automatically ignored.)
+    ///
+    /// This is done automatically when a store is popped from the navigation stack or when its sheet is dismissed.
+    /// However, if a child store is not retained by the store itself and is saved via the view state instead, the child
+    /// store is not cancelled. Using the `child` APIs allows the child store to be cancelled automatically when its
+    /// parent store is cancelled manually or as a result of going out of scope.
+    ///
+    /// Example:
+    /// ```Swift
+    /// private var childStore: ChildStoreNsp.Store { store.child()! }
+    /// 
+    /// public init(store: Store) {
+    ///    self.store = store
+    ///    store.addChildIfNeeded(ChildStoreNsp.store())
+    /// }
+    /// ```
+    public func child<T>(key: String = StateStore<T>.storeDefaultKey) -> StateStore<T>? {
+        children[key] as? StateStore<T>
+    }
     
     public var logConfig = LogConfig()
     internal var logger: Logger
@@ -261,22 +304,30 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     public private(set) var isCancelled = false
     public var hasRequest = false
     
-    public init(_ identifier: String, _ initialValue: State, reducer: Reducer, env: Environment?) {
-        self.identifier = identifier
+    public init(_ initialValue: State, reducer: Reducer, env: Environment?) {
         self.reducer = reducer
         self.state = initialValue
+        logger = Logger(subsystem: "ReducerStore", category: "\(Self.storeDefaultKey)")
         self.environment = env
-        
-        logger = Logger(subsystem: "ReducerStore", category: identifier)
+
+        if logStoreLifecycle {
+            logger.debug("Allocated store \(self.id)")
+        }
     }
     
-    public convenience init(_ identifier: String, _ initialValue: State, reducer: Reducer)
+    deinit {
+        if logStoreLifecycle {
+            logger.debug("Deallocated store \(self.id)")
+        }
+    }
+    
+    public convenience init(_ initialValue: State, reducer: Reducer)
     where Environment == Never, EffectAction == Never {
-        self.init(identifier, initialValue, reducer: reducer, env: nil)
+        self.init(initialValue, reducer: reducer, env: nil)
     }
     
-    public convenience init(_ identifier: String, _ initialValue: State, reducer: Reducer) where Environment == Void {
-        self.init(identifier, initialValue, reducer: reducer, env: ())
+    public convenience init(_ initialValue: State, reducer: Reducer) where Environment == Void {
+        self.init(initialValue, reducer: reducer, env: ())
     }
     
     public func addEffect(_ effect: Effect) {
@@ -339,8 +390,13 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     
     private func send(_ storeAction: StoreAction) {
         guard !isCancelled else {
-            logger.error("\nReceived action \n\(codeString(storeAction))\nto a store that is already cancelled.")
-            return
+            switch storeAction.action {
+            case .cancel:
+                return
+            default:
+                logger.error("\nReceived action \n\(codeString(storeAction))\nto a store that is already cancelled.")
+                return
+            }
         }
         
         var reducerInput = ""
@@ -405,7 +461,16 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             isCancelled = true
             syncEffect = nil
             effect = nil
-            
+            environment = nil
+            for child in children.values {
+                child.cancel()
+            }
+            children.removeAll()
+
+            if logStoreLifecycle {
+                logger.debug("Cancelled store \(self.id)")
+            }
+
         case .none:
             syncEffect = nil
             effect = nil
@@ -642,7 +707,7 @@ extension StateStore {
     @MainActor
     public func saveSnapshotsIfNeeded() {
         guard logConfig.saveSnapshots else { return }
-        let snapshotCollection = ReducerSnapshotCollection(title: identifier, snapshots: codeStringSnapshots)
+        let snapshotCollection = ReducerSnapshotCollection(title: Self.storeDefaultKey, snapshots: codeStringSnapshots)
         do {
             if let path = try snapshotCollection.save() {
                 logger.info("Saved reducer snapshots to \n\(path)")
