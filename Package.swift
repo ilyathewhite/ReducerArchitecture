@@ -14,12 +14,13 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/ilyathewhite/CombineEx.git", .branch("main"))
+        .package(url: "https://github.com/ilyathewhite/CombineEx.git", .branch("main")),
+        .package(url: "https://github.com/ilyathewhite/FoundationEx.git", .branch("main")),
     ],
     targets: [
         .target(
             name: "ReducerArchitecture",
-            dependencies: ["CombineEx"],
+            dependencies: ["CombineEx", "FoundationEx"],
             swiftSettings: [.unsafeFlags([
                 "-Xfrontend",
                 "-warn-long-function-bodies=100",

@@ -207,7 +207,7 @@ public struct NavigationFlow<T: StoreUINamespace>: View {
 /// Same as NavigationFlow, but uses UINavigationController for navigation.
 ///
 /// This is a workaround for nested navigation stacks that don't seem to be supported in SwiftUI right now.
-public struct UIKitNavigationFlow<T: StoreUINamespace>: UIViewControllerRepresentable {
+public struct UIKitNavigationFlow<T: StoreUINamespace>: View {
     public let root: T.Store
     public let run: (T.PublishedValue, _ env: NavigationEnv) async -> Void
     
@@ -215,14 +215,31 @@ public struct UIKitNavigationFlow<T: StoreUINamespace>: UIViewControllerRepresen
         self.root = root
         self.run = run
     }
+    
+    public var body: some View {
+        UIKitNavigationFlowImpl(root: root, run: run)
+            .ignoresSafeArea()
+    }
+}
 
-    public init(root: T.Store) {
+// Cannot use this struct directly due to limitations related to safe area.
+struct UIKitNavigationFlowImpl<T: StoreUINamespace>: UIViewControllerRepresentable {
+    let root: T.Store
+    let run: (T.PublishedValue, _ env: NavigationEnv) async -> Void
+    
+    init(root: T.Store, run: @escaping (T.PublishedValue, _: NavigationEnv) async -> Void) {
+        self.root = root
+        self.run = run
+    }
+
+    init(root: T.Store) {
         self.root = root
         self.run = { _, _ in }
     }
 
-    public func makeUIViewController(context: Context) -> UINavigationController {
-        let nc = UINavigationController()
+    func makeUIViewController(context: Context) -> UINavigationController {
+        let rootVC = HostingController(store: root)
+        let nc = UINavigationController(rootViewController: rootVC)
         Task {
             let env = NavigationEnv(nc, replaceLastWith: { _, _  in })
             await root.get { value in
@@ -230,13 +247,10 @@ public struct UIKitNavigationFlow<T: StoreUINamespace>: UIViewControllerRepresen
             }
         }
         
-        let rootView = T.ContentView(store: root)
-        let rootVC = UIHostingController(rootView: rootView)
-        nc.viewControllers = [rootVC]
         return nc
     }
     
-    public func updateUIViewController(_ nc: UINavigationController, context: Context) {
+    func updateUIViewController(_ nc: UINavigationController, context: Context) {
     }
 }
 

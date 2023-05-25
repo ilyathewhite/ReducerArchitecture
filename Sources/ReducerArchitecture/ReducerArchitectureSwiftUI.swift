@@ -95,6 +95,13 @@ public struct StoreUI<Nsp: StoreUINamespace>: StoreUIContainer {
     }
 }
 
+extension StoreUI {
+    public init?(_ store: Nsp.Store?) {
+        guard let store else { return nil }
+        self.init(store)
+    }
+}
+
 public struct ConnectOnAppear: ViewModifier {
     public let connect: () -> Void
 

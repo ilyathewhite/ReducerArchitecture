@@ -58,6 +58,9 @@ public protocol AnyStore: AnyObject, Hashable, Identifiable {
     ///
     /// Useful for testing navigation flows.
     var hasRequest: Bool { get set }
+    
+    nonisolated
+    static var storeDefaultKey: String { get }
 }
 
 // value, publish, cancel
@@ -87,7 +90,8 @@ public extension AnyStore {
     }
     
     func firstValue() async throws -> PublishedValue {
-        try await value.first().async()
+        defer { cancel() }
+        return try await value.first().async()
     }
     
     func publish(_ value: PublishedValue) {
@@ -235,7 +239,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
         }
     }
     
-    public let id = UUID()
+    nonisolated public let id = UUID()
     private var nestedLevel = 0
     
     public var environment: Environment?
@@ -255,6 +259,17 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     public func addChild<T>(_ child: StateStore<T>, key: String = StateStore<T>.storeDefaultKey) {
         assert(children[key] == nil)
         children[key] = child
+    }
+    
+    /// Removes a child from the store. If not `nil`, `child` must be a child of the store
+    public func removeChild(_ child: (any AnyStore)?) {
+        guard let child else { return }
+        defer { child.cancel() }
+        guard let index = children.firstIndex(where: { $1 === child }) else {
+            assertionFailure()
+            return
+        }
+        children.remove(at: index)
     }
 
     /// Adds a child to the store. If the store already contains a child with the provided `key`, the child store
@@ -344,7 +359,10 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             Task {
                 await taskManager.addTask { [weak self] in
                     let action = await f()
-                    self?.send(.code(action))
+                    guard !Task.isCancelled else { return }
+                    guard let self else { return }
+                    guard !isCancelled else { return }
+                    send(.code(action))
                 }
             }
             
@@ -352,8 +370,11 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             Task {
                 await taskManager.addTask { [weak self] in
                     let actions = await f()
+                    guard let self else { return }
                     for action in actions {
-                        self?.send(.code(action))
+                        guard !Task.isCancelled else { return }
+                        guard !isCancelled else { return }
+                        send(.code(action))
                     }
                 }
             }
@@ -364,7 +385,9 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
                 await taskManager.addTask { [weak self] in
                     for await action in actions {
                         guard !Task.isCancelled else { return }
-                        self?.send(.code(action))
+                        guard let self else { return }
+                        guard !isCancelled else { return }
+                        send(.code(action))
                     }
                 }
             }
@@ -374,7 +397,9 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
                 await taskManager.addTask { [weak self] in
                     for await action in publisher.values {
                         guard !Task.isCancelled else { return }
-                        self?.send(.code(action))
+                        guard let self else { return }
+                        guard !isCancelled else { return }
+                        send(.code(action))
                     }
                 }
             }
