@@ -258,12 +258,14 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     /// Adds a child to the store. The store must not already contain a child with the provided `key`.
     public func addChild<T>(_ child: StateStore<T>, key: String = StateStore<T>.storeDefaultKey) {
         assert(children[key] == nil)
+        objectWillChange.send()
         children[key] = child
     }
     
     /// Removes a child from the store. If not `nil`, `child` must be a child of the store
     public func removeChild(_ child: (any AnyStore)?) {
         guard let child else { return }
+        objectWillChange.send()
         defer { child.cancel() }
         guard let index = children.firstIndex(where: { $1 === child }) else {
             assertionFailure()
@@ -276,7 +278,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     /// expression is not evaluated.
     public func addChildIfNeeded<T>(_ child: @autoclosure () -> StateStore<T>, key: String = StateStore<T>.storeDefaultKey) {
         if children[key] == nil {
-            children[key] = child()
+            addChild(child())
         }
     }
 
