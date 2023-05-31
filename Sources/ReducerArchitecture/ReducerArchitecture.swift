@@ -311,7 +311,11 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     public func child<T>(key: String = StateStore<T>.storeDefaultKey) -> StateStore<T>? {
         children[key] as? StateStore<T>
     }
-    
+
+    public func anyChild(key: String) -> (any AnyStore)? {
+        children[key]
+    }
+
     public var logConfig = LogConfig()
     internal var logger: Logger
     private var codeStringSnapshots: [ReducerSnapshotData] = []
