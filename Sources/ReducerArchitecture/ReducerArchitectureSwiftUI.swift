@@ -59,6 +59,14 @@ public extension StateStore where Nsp: StoreUINamespace {
     }
 }
 
+/// A type that can be used to create a view from a store. Used in APIs related to navigation.
+///
+/// `store.contentView` also provides a way to create a view from the store, but using store directly is not possible
+/// with `NavigationEnv` because the environment uses closures, and the closures whould have to be generic since
+/// `Store` is a generic class with the `Nsp` type parameter.
+///
+/// Presentation APIs also use `StoreUIContainer`. This makes it easier to replace presentation with push navigation
+/// and vice versa.
 public protocol StoreUIContainer<Nsp>: Hashable, Identifiable {
     associatedtype Nsp: StoreUINamespace
     var store: Nsp.Store { get }
