@@ -53,6 +53,12 @@ public protocol StoreUINamespace: StoreNamespace {
     associatedtype ContentView: StoreContentView where ContentView.Nsp == Self
 }
 
+public extension StateStore where Nsp: StoreUINamespace {
+    var contentView: Nsp.ContentView {
+        Nsp.ContentView(store: self)
+    }
+}
+
 public protocol StoreUIContainer<Nsp>: Hashable, Identifiable {
     associatedtype Nsp: StoreUINamespace
     var store: Nsp.Store { get }
@@ -60,10 +66,12 @@ public protocol StoreUIContainer<Nsp>: Hashable, Identifiable {
 }
 
 extension StoreUIContainer {
+    @MainActor
     public func makeView() -> some View {
-        Nsp.ContentView(store: store)
+        store.contentView
     }
     
+    @MainActor
     public func makeAnyView() -> AnyView {
         AnyView(makeView())
     }

@@ -29,6 +29,6 @@ struct Done_Previews: PreviewProvider {
     static let store = Done.store(value: "abc")
     
     static var previews: some View {
-        Done.ContentView(store: store)
+        store.contentView
     }
 }

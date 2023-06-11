@@ -74,7 +74,7 @@ public class HostingController<T: StoreUINamespace>: UIHostingController<T.Conte
     
     public init(store: T.Store) {
         self.store = store
-        super.init(rootView: T.ContentView(store: store))
+        super.init(rootView: store.contentView)
     }
     
     @MainActor required dynamic init?(coder aDecoder: NSCoder) {

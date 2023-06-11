@@ -35,7 +35,7 @@ struct StringPicker_Previews: PreviewProvider {
     
     static var previews: some View {
         NavigationStack {
-            StringPicker.ContentView(store: store)
+            store.contentView
         }
     }
 }

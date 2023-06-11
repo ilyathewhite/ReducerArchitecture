@@ -188,7 +188,7 @@ public struct NavigationFlow<T: StoreUINamespace>: View {
 
     public var body: some View {
         NavigationStack(path: $pathContainer.path) {
-            T.ContentView(store: root)
+            root.contentView
                 .background(
                     ForEach(pathContainer.stack, id: \.id) { storeUI in
                         addNavigation(storeUI)

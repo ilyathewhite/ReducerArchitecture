@@ -48,7 +48,7 @@ struct IntPicker_Previews: PreviewProvider {
     
     static var previews: some View {
         NavigationStack {
-            IntPicker.ContentView(store: store)
+            store.contentView
         }
     }
 }

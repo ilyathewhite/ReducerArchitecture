@@ -48,7 +48,7 @@ struct DelimiterPicker_Previews: PreviewProvider {
     
     static var previews: some View {
         NavigationStack {
-            DelimiterPicker.ContentView(store: store)
+            store.contentView
         }
     }
 }
