@@ -208,3 +208,44 @@ extension StateStore {
         )
     }
 }
+
+#if canImport(SwiftUI)
+import SwiftUI
+
+public enum NavigationEnvRootTestStore: StoreNamespace {
+    public typealias PublishedValue = Void
+    
+    public typealias StoreEnvironment = Never
+    public typealias MutatingAction = Void
+    public typealias EffectAction = Never
+    
+    public struct StoreState {
+        let actionName: String
+    }
+}
+
+public extension NavigationEnvRootTestStore {
+    @MainActor
+    static func store(actionName: String) -> Store {
+        Store(.init(actionName: actionName), reducer: reducer())
+    }
+}
+
+extension NavigationEnvRootTestStore: StoreUINamespace {
+    public struct ContentView: StoreContentView {
+        public typealias Nsp = NavigationEnvRootTestStore
+        @ObservedObject public var store: Store
+        
+        public init(store: Store) {
+            self.store = store
+        }
+        
+        public var body: some View {
+            Button(store.state.actionName) {
+                store.publish(())
+            }
+        }
+    }
+}
+
+#endif
