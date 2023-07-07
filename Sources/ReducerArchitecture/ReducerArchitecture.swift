@@ -496,7 +496,8 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             for child in children.values {
                 child.cancel()
             }
-            children.removeAll()
+            // don't remove child stores in case a child store view is rendered
+            // after the child store is cancelled
 
             if logStoreLifecycle {
                 logger.debug("Cancelled store \(self.id)")
