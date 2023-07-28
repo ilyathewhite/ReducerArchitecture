@@ -175,6 +175,11 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
         case publish(PublishedValue)
         case cancel
         case none
+        
+        // Disambiguate from Optional.none
+        public static var noAction: Action {
+            .none
+        }
     }
     
     public enum StoreAction {
