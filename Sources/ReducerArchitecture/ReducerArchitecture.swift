@@ -94,6 +94,14 @@ public extension AnyStore {
         return try await value.first().async()
     }
     
+    /// A convenience API to avoid a race condition between the code that needs a first value
+    /// and the code that provides it.
+    func getRequest() async -> Void {
+        while !hasRequest {
+            await Task.yield()
+        }
+    }
+    
     func publish(_ value: PublishedValue) {
         if isStateStore  {
             assertionFailure()
