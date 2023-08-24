@@ -276,10 +276,28 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     }
     
     /// Removes a child from the store. If not `nil`, `child` must be a child of the store
-    public func removeChild(_ child: (any AnyStore)?) {
+    /// - Parameters:
+    ///   - child: The child store to be removed.
+    ///   - delay: Whether to delay the actual delay until the next UI update.
+    ///
+    ///  `delay` is useful to allow animated transitions for removing the UI for `child`.
+    public func removeChild(_ child: (any AnyStore)?, delay: Bool = true) {
         guard let child else { return }
         objectWillChange.send()
-        defer { child.cancel() }
+        child.cancel()
+        if delay {
+            DispatchQueue.main.async {
+                self.removeChildImpl(child)
+            }
+        }
+        else {
+            removeChildImpl(child)
+        }
+    }
+    
+    private func removeChildImpl(_ child: (any AnyStore)?) {
+        guard let child else { return }
+        assert(child.isCancelled)
         guard let index = children.firstIndex(where: { $1 === child }) else {
             assertionFailure()
             return
