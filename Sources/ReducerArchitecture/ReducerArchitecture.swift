@@ -42,6 +42,7 @@ extension StoreNamespace {
 
 /// Logs store allocation, cancellation, and deallocation. The default is `false`.
 public var logStoreLifecycle = false
+public var storeLifecycleDict: [UUID: (name: String, lastEvent: String)] = [:]
 
 @MainActor
 // Conformance to Hashable is necessary for SwiftUI navigation
@@ -364,12 +365,14 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
 
         if logStoreLifecycle {
             logger.debug("Allocated store \(self.id)")
+            storeLifecycleDict[id] = (name: Self.storeDefaultKey, "Allocated")
         }
     }
     
     deinit {
         if logStoreLifecycle {
             logger.debug("Deallocated store \(self.id)")
+            storeLifecycleDict.removeValue(forKey: id)
         }
     }
     
@@ -532,6 +535,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
 
             if logStoreLifecycle {
                 logger.debug("Cancelled store \(self.id)")
+                storeLifecycleDict[id] = (name: Self.storeDefaultKey, "Cancelled")
             }
 
         case .none:
