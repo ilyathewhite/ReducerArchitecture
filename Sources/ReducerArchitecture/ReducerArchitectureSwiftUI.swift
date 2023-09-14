@@ -76,7 +76,7 @@ public protocol StoreUIContainer<Nsp>: Hashable, Identifiable {
 extension StoreUIContainer {
     @MainActor
     public func makeView() -> some View {
-        store.contentView
+        store.contentView.id(store.id)
     }
     
     @MainActor
