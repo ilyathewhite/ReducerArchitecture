@@ -396,9 +396,29 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             }
             
         case .asyncAction(let f):
-            Task {
-                await taskManager.addTask { [weak self] in
-                    let action = await f()
+            taskManager.addTask { [weak self] in
+                let action = await f()
+                guard !Task.isCancelled else { return }
+                guard let self else { return }
+                guard !isCancelled else { return }
+                send(.code(action))
+            }
+            
+        case .asyncActions(let f):
+            taskManager.addTask { [weak self] in
+                let actions = await f()
+                guard let self else { return }
+                for action in actions {
+                    guard !Task.isCancelled else { return }
+                    guard !isCancelled else { return }
+                    send(.code(action))
+                }
+            }
+            
+        case .asyncActionSequence(let f):
+            let actions = f()
+            taskManager.addTask { [weak self] in
+                for await action in actions {
                     guard !Task.isCancelled else { return }
                     guard let self else { return }
                     guard !isCancelled else { return }
@@ -406,41 +426,13 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
                 }
             }
             
-        case .asyncActions(let f):
-            Task {
-                await taskManager.addTask { [weak self] in
-                    let actions = await f()
-                    guard let self else { return }
-                    for action in actions {
-                        guard !Task.isCancelled else { return }
-                        guard !isCancelled else { return }
-                        send(.code(action))
-                    }
-                }
-            }
-            
-        case .asyncActionSequence(let f):
-            let actions = f()
-            Task {
-                await taskManager.addTask { [weak self] in
-                    for await action in actions {
-                        guard !Task.isCancelled else { return }
-                        guard let self else { return }
-                        guard !isCancelled else { return }
-                        send(.code(action))
-                    }
-                }
-            }
-            
         case .publisher(let publisher):
-            Task {
-                await taskManager.addTask { [weak self] in
-                    for await action in publisher.values {
-                        guard !Task.isCancelled else { return }
-                        guard let self else { return }
-                        guard !isCancelled else { return }
-                        send(.code(action))
-                    }
+            taskManager.addTask { [weak self] in
+                for await action in publisher.values {
+                    guard !Task.isCancelled else { return }
+                    guard let self else { return }
+                    guard !isCancelled else { return }
+                    send(.code(action))
                 }
             }
             
@@ -524,6 +516,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
         case .cancel:
             publishedValue.send(completion: .failure(.cancel))
             isCancelled = true
+            taskManager.cancelAllTasks()
             syncEffect = nil
             effect = nil
             environment = nil
