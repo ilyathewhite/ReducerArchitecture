@@ -349,7 +349,9 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     }
 
     public var logConfig = LogConfig()
-    internal var logger: Logger
+    internal var logger: Logger {
+        logConfig.logger
+    }
     private var codeStringSnapshots: [ReducerSnapshotData] = []
     
     @Published public private(set) var state: State
@@ -360,7 +362,6 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     public init(_ initialValue: State, reducer: Reducer, env: Environment?) {
         self.reducer = reducer
         self.state = initialValue
-        logger = Logger(subsystem: "ReducerStore", category: "\(Self.storeDefaultKey)")
         self.environment = env
 
         if logStoreLifecycle {
@@ -371,7 +372,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     
     deinit {
         if logStoreLifecycle {
-            logger.debug("Deallocated store \(self.id)")
+            logConfig.logger.debug("Deallocated store \(self.id)")
             storeLifecycleDict.removeValue(forKey: id)
         }
     }
@@ -453,6 +454,27 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             default:
                 logger.error("\nReceived action \n\(codeString(storeAction))\nto a store that is already cancelled.")
                 return
+            }
+        }
+        if let logUserActions = logConfig.logUserActions {
+            let actionName: String?
+            switch storeAction {
+            case .user(let action):
+                switch action {
+                case .mutating(let mutatingAction, _, _):
+                    actionName = caseName(mutatingAction)
+                case .effect(let effectAction):
+                    actionName = caseName(effectAction)
+                case .cancel, .publish:
+                    actionName = caseName(action)
+                case .none:
+                    actionName = nil
+                }
+            default:
+                actionName = nil
+            }
+            if let actionName {
+                logUserActions(actionName)
             }
         }
         
@@ -645,6 +667,22 @@ extension StateStore {
         public var logState = false
         public var logActions = false
         public var saveSnapshots = false
+        internal var logger: Logger
+        public var logUserActions: ((String) -> Void)?
+
+        public init(
+            logState: Bool = false,
+            logActions: Bool = false,
+            saveSnapshots: Bool = false,
+            logger: Logger = Logger(subsystem: "ReducerStore", category: "\(StateStore.storeDefaultKey)"),
+            logUserActions: ((String) -> Void)? = nil
+        ) {
+            self.logState = logState
+            self.logActions = logActions
+            self.saveSnapshots = saveSnapshots
+            self.logger = logger
+            self.logUserActions = logUserActions
+        }
         
         var logEnabled: Bool {
             logState || logActions
