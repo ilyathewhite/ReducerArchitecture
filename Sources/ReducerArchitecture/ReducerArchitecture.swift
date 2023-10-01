@@ -41,8 +41,28 @@ extension StoreNamespace {
 }
 
 /// Logs store allocation, cancellation, and deallocation. The default is `false`.
-public var logStoreLifecycle = false
-public var storeLifecycleDict: [UUID: (name: String, lastEvent: String)] = [:]
+public struct StoreLifecycleLog {
+    public var enabled = false
+    public var debug = false
+    public private (set) var lastEvent: [UUID: (name: String, event: String)] = [:]
+    
+    mutating func addEvent(id: UUID, name: String, event: String) {
+        guard !exclude(name) else { return }
+        lastEvent[id] = (name: name, event: event)
+    }
+    
+    mutating func removeEvents(id: UUID) {
+        lastEvent.removeValue(forKey: id)
+    }
+
+    public var exclude: (_ name: String) -> Bool = { name in
+        if name == "NavigationEnvPlaceholder" {
+            return true
+        }
+        return false
+    }
+}
+public var storeLifecycleLog = StoreLifecycleLog()
 
 @MainActor
 // Conformance to Hashable is necessary for SwiftUI navigation
@@ -364,16 +384,22 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
         self.state = initialValue
         self.environment = env
 
-        if logStoreLifecycle {
-            logger.debug("Allocated store \(self.id)")
-            storeLifecycleDict[id] = (name: Self.storeDefaultKey, "Allocated")
+        if storeLifecycleLog.enabled {
+            let name = Self.storeDefaultKey
+            if storeLifecycleLog.debug {
+                logger.debug("Allocated store \(name)\nid: \(self.id)")
+            }
+            storeLifecycleLog.addEvent(id: id, name: name, event: "Allocated")
         }
     }
     
     deinit {
-        if logStoreLifecycle {
-            logConfig.logger.debug("Deallocated store \(self.id)")
-            storeLifecycleDict.removeValue(forKey: id)
+        if storeLifecycleLog.enabled {
+            let name = Self.storeDefaultKey
+            if storeLifecycleLog.debug {
+                logConfig.logger.debug("Deallocated store \(name)\nid: \(self.id)")
+            }
+            storeLifecycleLog.removeEvents(id: id)
         }
     }
     
@@ -548,9 +574,12 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             // don't remove child stores in case a child store view is rendered
             // after the child store is cancelled
 
-            if logStoreLifecycle {
-                logger.debug("Cancelled store \(self.id)")
-                storeLifecycleDict[id] = (name: Self.storeDefaultKey, "Cancelled")
+            if storeLifecycleLog.enabled {
+                let name = Self.storeDefaultKey
+                if storeLifecycleLog.debug {
+                    logger.debug("Cancelled store \(name)\nid: \(self.id)")
+                }
+                storeLifecycleLog.addEvent(id: id, name: name, event: "Cancelled")
             }
 
         case .none:

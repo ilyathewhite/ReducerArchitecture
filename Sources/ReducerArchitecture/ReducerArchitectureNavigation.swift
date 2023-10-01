@@ -9,7 +9,7 @@ import Combine
 import CombineEx
 import os
 
-private enum Placeholder: StoreNamespace {
+private enum NavigationEnvPlaceholder: StoreNamespace {
     typealias PublishedValue = Void
     typealias StoreEnvironment = Never
     typealias MutatingAction = Void
@@ -17,7 +17,7 @@ private enum Placeholder: StoreNamespace {
     struct StoreState {}
 }
 
-extension Placeholder {
+extension NavigationEnvPlaceholder {
     @MainActor
     static func store() -> Store {
         .init(.init(), reducer: reducer())
@@ -30,7 +30,7 @@ public struct NavigationEnv {
         let timeIndex: Int
         let store: any AnyStore
 
-        static let placeholder = Self.init(timeIndex: -1, store: Placeholder.store())
+        static let placeholder = Self.init(timeIndex: -1, store: NavigationEnvPlaceholder.store())
     }
     
     /// Returns the index of the top component on the stack.
