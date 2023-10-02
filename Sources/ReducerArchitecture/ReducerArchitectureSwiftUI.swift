@@ -7,7 +7,6 @@
 
 #if canImport(SwiftUI)
 import SwiftUI
-import SwiftUIEx
 
 public extension StateStore {
     func binding<Value>(
@@ -116,30 +115,6 @@ extension StoreUI {
     public init?(_ store: Nsp.Store?) {
         guard let store else { return nil }
         self.init(store)
-    }
-}
-
-public struct ConnectOnAppear: ViewModifier {
-    public let connectIfHidden: Bool
-    public let connect: () -> Void
-
-    @Environment(\.isHidden) var isHidden
-    @State private var isConnected = false
-
-    public func body(content: Content) -> some View {
-        content
-            .onAppear {
-                guard !isConnected else { return }
-                guard !isHidden || connectIfHidden else { return }
-                connect()
-                isConnected = true
-            }
-    }
-}
-
-public extension View {
-    func connectOnAppear(connectIfHidden: Bool = false, connect: @escaping () -> Void) -> some View {
-        modifier(ConnectOnAppear(connectIfHidden: connectIfHidden, connect: connect))
     }
 }
 
