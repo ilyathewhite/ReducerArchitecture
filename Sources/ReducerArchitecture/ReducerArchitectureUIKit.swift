@@ -7,8 +7,11 @@
 //
 
 #if canImport(UIKit)
-
 import UIKit
+#else
+public class UIViewController {}
+#endif
+
 import SwiftUI
 import Combine
 import CombineEx
@@ -39,6 +42,8 @@ public extension BasicReducerArchitectureVC {
         store.cancel()
     }
 }
+
+#if canImport(UIKit)
 
 public class ContainerVC: UIViewController {
     let vc: any BasicReducerArchitectureVC

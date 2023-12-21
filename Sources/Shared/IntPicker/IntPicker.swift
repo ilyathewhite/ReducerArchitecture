@@ -24,7 +24,7 @@ enum IntPicker: StoreNamespace {
 extension IntPicker {
     @MainActor
     static func store() -> Store {
-        .init(identifier, .init(), reducer: reducer())
+        .init(.init(), reducer: reducer())
     }
     
     @MainActor

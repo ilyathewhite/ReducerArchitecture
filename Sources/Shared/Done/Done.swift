@@ -22,6 +22,6 @@ enum Done: StoreNamespace {
 extension Done {
     @MainActor
     static func store(value: String) -> Store {
-        .init(identifier, .init(value: value), reducer: reducer())
+        .init(.init(value: value), reducer: reducer())
     }
 }

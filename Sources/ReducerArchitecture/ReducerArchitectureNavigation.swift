@@ -136,6 +136,7 @@ public struct NavigationNode<T: StoreUINamespace> {
     }
 }
 
+#if canImport(UIKit)
 @MainActor
 public struct NavigationVCNode<VC: BasicReducerArchitectureVC> {
     let config: VC.Configuration
@@ -162,6 +163,7 @@ public struct NavigationVCNode<VC: BasicReducerArchitectureVC> {
         }
     }
 }
+#endif
 
 #if canImport(SwiftUI)
 import SwiftUI
@@ -203,6 +205,8 @@ public struct NavigationFlow<T: StoreUINamespace>: View {
         }
     }
 }
+
+#if canImport(UIKit)
 
 /// Same as NavigationFlow, but uses UINavigationController for navigation.
 ///
@@ -253,6 +257,8 @@ struct UIKitNavigationFlowImpl<T: StoreUINamespace>: UIViewControllerRepresentab
     func updateUIViewController(_ nc: UINavigationController, context: Context) {
     }
 }
+
+#endif
 
 @available(iOS 16.0, *)
 @available(macOS 13.0, *)
@@ -389,6 +395,16 @@ extension NavigationEnv {
 
 #endif
 
+extension NavigationEnv {
+    static func getStore(_ storeUI: some StoreUIContainer) -> any AnyStore {
+        storeUI.store
+    }    
+    
+    static func getStore(_ container: some BasicReducerArchitectureVC) -> any AnyStore {
+        container.store
+    }
+}
+
 #if canImport(UIKit)
 import UIKit
 
@@ -406,14 +422,6 @@ extension NavigationEnv {
         else {
             return vc
         }
-    }
-    
-    static func getStore(_ storeUI: some StoreUIContainer) -> any AnyStore {
-        storeUI.store
-    }
-    
-    static func getStore(_ container: some BasicReducerArchitectureVC) -> any AnyStore {
-        container.store
     }
 
     @MainActor

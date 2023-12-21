@@ -7,7 +7,6 @@
 
 import XCTest
 import ReducerArchitecture
-import UIKit
 @testable import Shared
 
 @MainActor

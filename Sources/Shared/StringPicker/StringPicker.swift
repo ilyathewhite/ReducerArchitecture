@@ -25,7 +25,7 @@ enum StringPicker: StoreNamespace {
 extension StringPicker {
     @MainActor
     static func store(title: String? = nil) -> Store {
-        .init(identifier, .init(title: title ?? "Pick a string", value: ""), reducer: reducer())
+        .init(.init(title: title ?? "Pick a string", value: ""), reducer: reducer())
     }
     
     @MainActor

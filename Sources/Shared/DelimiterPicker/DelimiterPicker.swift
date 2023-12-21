@@ -31,7 +31,7 @@ enum DelimiterPicker: StoreNamespace {
 extension DelimiterPicker {
     @MainActor
     static func store() -> Store {
-        .init(identifier, .init(value: nil), reducer: reducer())
+        .init(.init(value: nil), reducer: reducer())
     }
     
     @MainActor
