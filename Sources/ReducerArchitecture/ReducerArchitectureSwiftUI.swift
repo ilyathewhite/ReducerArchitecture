@@ -135,6 +135,18 @@ public extension View {
             }
         )
     }
+    
+    @MainActor
+    func sheetOrWindow<V1: View, C: StoreUIContainer, V2: View>(
+        contentView: V1,
+        _ keyPath: KeyPath<V1, C?>,
+        isModal: Bool = true,
+        content: @escaping () -> V2
+    ) -> some View {
+        sheetOrWindow(isPresented: contentView.showUI(keyPath), storeUI: contentView[keyPath: keyPath]) {
+            content()
+        }
+    }
 }
 
 #endif

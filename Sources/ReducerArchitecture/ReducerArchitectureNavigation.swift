@@ -584,3 +584,86 @@ extension NavigationEnv {
         )
     }
 }
+
+// Sheet or Window
+
+public struct SheetOrWindow<C: StoreUIContainer, V: View>: ViewModifier {
+#if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
+    @State private var id: UUID?
+#endif
+    
+    let isPresented: Binding<Bool>
+    let storeUI: C?
+    let isModal: Bool
+    let presentedContent: () -> V?
+    
+    public init(isPresented: Binding<Bool>, storeUI: C?, isModal: Bool, content: @escaping () -> V?) {
+        self.isPresented = isPresented
+        self.storeUI = storeUI
+        self.isModal = isModal
+        self.presentedContent = content
+    }
+
+    public func body(content: Content) -> some View {
+#if os(iOS)
+        content.sheet(isPresented: isPresented, content: presentedContent)
+#else
+        content.onChange(of: storeUI) { storeUI in
+            if let storeUI {
+                id = storeUI.id
+                StoreUIContainers.add(storeUI)
+                openWindow(id: C.Nsp.Store.storeDefaultKey, value: storeUI.id)
+            }
+            else {
+                if let id {
+                    StoreUIContainers.remove(id: id)
+                }
+                dismiss()
+            }
+        }
+#endif
+    }
+}
+
+extension View {
+    public func sheetOrWindow<C: StoreUIContainer, V: View>(
+        isPresented: Binding<Bool>,
+        storeUI: C?,
+        isModal: Bool = true, 
+        content: @escaping () -> V?
+    )
+    -> some View {
+        self.modifier(SheetOrWindow(isPresented: isPresented, storeUI: storeUI, isModal: isModal, content: content))
+    }
+}
+
+public struct WindowContentView<C: StoreUIContainer>: View {
+    let id: UUID?
+    let storeUI: C?
+    
+    @MainActor
+    public init(id: UUID?) {
+        self.id = id
+        self.storeUI = id.flatMap { StoreUIContainers.get(id: $0) }
+    }
+    
+    public var body: some View {
+        storeUI?.makeView()
+            .onDisappear {
+                storeUI?.cancel()
+            }
+    }
+}
+
+@available(iOS 16.0, *)
+@available(macOS 13.0, *)
+extension StoreUINamespace {
+    @MainActor
+    public static func windowGroup() -> WindowGroup<PresentedWindowContent<UUID, WindowContentView<StoreUI<Nsp>>>> where Nsp: StoreUINamespace {
+        WindowGroup(id: Store.storeDefaultKey, for: UUID.self) { id in
+            WindowContentView<StoreUI<Nsp>>(id: id.wrappedValue)
+        }
+    }
+}
