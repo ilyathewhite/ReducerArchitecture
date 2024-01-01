@@ -590,7 +590,6 @@ extension NavigationEnv {
 public struct SheetOrWindow<C: StoreUIContainer, V: View>: ViewModifier {
 #if os(macOS)
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismiss) private var dismiss
     @State private var id: UUID?
 #endif
     
@@ -620,8 +619,21 @@ public struct SheetOrWindow<C: StoreUIContainer, V: View>: ViewModifier {
                 if let id {
                     StoreUIContainers.remove(id: id)
                 }
-                dismiss()
             }
+        }
+        .overlay {
+            if isModal, id != nil, let storeUI, !storeUI.store.isCancelled {
+                Color.primary.opacity(0.1)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        id = nil
+                        storeUI.cancel()
+                    }
+            }
+        }
+        .onDisappear {
+            id = nil
+            storeUI?.store.cancel()
         }
 #endif
     }
@@ -640,20 +652,37 @@ extension View {
 }
 
 public struct WindowContentView<C: StoreUIContainer>: View {
-    let id: UUID?
     let storeUI: C?
+    
+    struct ContentView: View {
+        let storeUI: C
+        @Environment(\.dismiss) private var dismiss
+        
+        @MainActor
+        public init(storeUI: C) {
+            self.storeUI = storeUI
+        }
+        
+        var body: some View {
+            storeUI.makeView()
+                .onDisappear {
+                    storeUI.cancel()
+                }
+                .onReceive(storeUI.store.isCancelledPublisher) { _ in
+                    dismiss()
+                }
+        }
+    }
     
     @MainActor
     public init(id: UUID?) {
-        self.id = id
         self.storeUI = id.flatMap { StoreUIContainers.get(id: $0) }
     }
     
     public var body: some View {
-        storeUI?.makeView()
-            .onDisappear {
-                storeUI?.cancel()
-            }
+        if let storeUI {
+            ContentView(storeUI: storeUI)
+        }
     }
 }
 

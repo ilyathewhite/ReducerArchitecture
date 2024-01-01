@@ -137,6 +137,15 @@ public extension AnyStore {
         publishedValue.send(completion: .failure(.cancel))
     }
     
+    var isCancelledPublisher: AnyPublisher<Void, Never> {
+        publishedValue
+            .map { _ in false }
+            .replaceError(with: true)
+            .filter { $0 }
+            .map { _ in () }
+            .eraseToAnyPublisher()
+    }
+    
     var isStateStore: Bool {
         "\(type(of: self))".hasPrefix("StateStore<")
     }
