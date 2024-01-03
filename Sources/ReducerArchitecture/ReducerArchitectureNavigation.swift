@@ -587,7 +587,7 @@ extension NavigationEnv {
 
 // Sheet or Window
 
-public struct SheetOrWindow<C: StoreUIContainer, V: View>: ViewModifier {
+public struct FullScreenOrWindow<C: StoreUIContainer, V: View>: ViewModifier {
 #if os(macOS)
     @Environment(\.openWindow) private var openWindow
     @State private var id: UUID?
@@ -607,7 +607,7 @@ public struct SheetOrWindow<C: StoreUIContainer, V: View>: ViewModifier {
 
     public func body(content: Content) -> some View {
 #if os(iOS)
-        content.sheet(isPresented: isPresented, content: presentedContent)
+        content.fullScreenCover(isPresented: isPresented, content: presentedContent)
 #else
         content.onChange(of: storeUI) { storeUI in
             if let storeUI {
@@ -640,14 +640,14 @@ public struct SheetOrWindow<C: StoreUIContainer, V: View>: ViewModifier {
 }
 
 extension View {
-    public func sheetOrWindow<C: StoreUIContainer, V: View>(
+    public func fullScreenOrWindow<C: StoreUIContainer, V: View>(
         isPresented: Binding<Bool>,
         storeUI: C?,
         isModal: Bool = true, 
         content: @escaping () -> V?
     )
     -> some View {
-        self.modifier(SheetOrWindow(isPresented: isPresented, storeUI: storeUI, isModal: isModal, content: content))
+        self.modifier(FullScreenOrWindow(isPresented: isPresented, storeUI: storeUI, isModal: isModal, content: content))
     }
 }
 
