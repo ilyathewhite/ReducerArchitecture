@@ -165,6 +165,17 @@ public struct NavigationVCNode<VC: BasicReducerArchitectureVC> {
 }
 #endif
 
+private struct BackActionKey: EnvironmentKey {
+    static let defaultValue: (() -> ())? = nil
+}
+
+public extension EnvironmentValues {
+    var backAction: (() -> ())? {
+        get { self[BackActionKey.self] }
+        set { self[BackActionKey.self] = newValue }
+    }
+}
+
 #if canImport(SwiftUI)
 import SwiftUI
 
@@ -197,6 +208,10 @@ public struct NavigationFlow<T: StoreUINamespace>: View {
                     }
                 )
         }
+        .onAppear {
+            pathContainer.root = StoreUI(root)
+        }
+        .environment(\.backAction, { pathContainer.pop() })
         .task {
             let env = NavigationEnv(pathContainer: pathContainer)
             await root.get { value in
@@ -206,7 +221,47 @@ public struct NavigationFlow<T: StoreUINamespace>: View {
     }
 }
 
-#if canImport(UIKit)
+#if os(macOS)
+
+public struct CustomNavigationFlow<T: StoreUINamespace>: View {
+    let root: T.Store
+    let run: (T.PublishedValue, _ env: NavigationEnv) async -> Void
+    
+    @StateObject private var pathContainer = NavigationPathContainer()
+    
+    public init(root: T.Store, run: @escaping (T.PublishedValue, _: NavigationEnv) async -> Void) {
+        self.root = root
+        self.run = run
+    }
+    
+    public var body: some View {
+        GeometryReader { proxy in
+            HStack(spacing: 0) {
+                root.contentView
+                    .frame(width: proxy.size.width)
+                ForEach(pathContainer.stack, id: \.id) { storeUI in
+                    storeUI.makeAnyView()
+                        .frame(width: proxy.size.width)
+                }
+            }
+            .frame(width: proxy.size.width, alignment: .trailing)
+            .onAppear {
+                pathContainer.root = StoreUI(root)
+            }
+            .environment(\.backAction, { pathContainer.pop() })
+            .task {
+                let env = NavigationEnv(pathContainer: pathContainer)
+                await root.get { value in
+                    await run(value, env)
+                }
+            }
+        }
+    }
+}
+
+#endif
+
+#if os(iOS)
 
 /// Same as NavigationFlow, but uses UINavigationController for navigation.
 ///
@@ -264,6 +319,7 @@ struct UIKitNavigationFlowImpl<T: StoreUINamespace>: UIViewControllerRepresentab
 @available(macOS 13.0, *)
 @MainActor
 public class NavigationPathContainer: ObservableObject {
+    var root: (any StoreUIContainer)?
     public private(set) var stack: [any StoreUIContainer] = []
     private var internalChange = false
     @Published public var path: NavigationPath = .init() {
@@ -283,7 +339,12 @@ public class NavigationPathContainer: ObservableObject {
     }
     
     public func push(_ newValue: any StoreUIContainer & Hashable) -> Int {
-        pushImpl(newValue)
+        defer { newValue.updateNavigationCount() }
+        return pushImpl(newValue)
+    }
+    
+    public func pop() {
+        popTo(index: currentIndex - 1)
     }
     
     public func pushImpl(_ newValue: some StoreUIContainer & Hashable) -> Int {
@@ -319,6 +380,12 @@ public class NavigationPathContainer: ObservableObject {
         internalChange = true
         defer {
             internalChange = false
+            if let last = stack.last {
+                last.updateNavigationCount()
+            }
+            else {
+                root?.updateNavigationCount()
+            }
         }
 
         guard -1 <= index, index < stack.count else {

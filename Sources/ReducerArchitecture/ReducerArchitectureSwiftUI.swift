@@ -51,6 +51,11 @@ public protocol StoreContentView: View {
 
 public protocol StoreUINamespace: StoreNamespace {
     associatedtype ContentView: StoreContentView where ContentView.Nsp == Self
+    static func updateNavigationCount(_ store: Store) -> Void
+}
+
+public extension StoreUINamespace {
+    static func updateNavigationCount(_ store: Store) -> Void {}
 }
 
 public extension StateStore where Nsp: StoreUINamespace {
@@ -96,6 +101,11 @@ extension StoreUIContainer {
     @MainActor
     public func cancel() {
         store.cancel()
+    }
+    
+    @MainActor
+    public func updateNavigationCount() {
+        Nsp.updateNavigationCount(store)
     }
 }
 
