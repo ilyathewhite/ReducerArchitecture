@@ -654,6 +654,21 @@ extension NavigationEnv {
 
 // Sheet or Window
 
+#if os(macOS)
+
+private struct DismissModalWindowKey: EnvironmentKey {
+    static let defaultValue: (() -> ())? = nil
+}
+
+public extension EnvironmentValues {
+    var dismissModalWindow: (() -> ())? {
+        get { self[DismissModalWindowKey.self] }
+        set { self[DismissModalWindowKey.self] = newValue }
+    }
+}
+
+#endif
+
 public struct FullScreenOrWindow<C: StoreUIContainer, V: View>: ViewModifier {
 #if os(macOS)
     @Environment(\.openWindow) private var openWindow
@@ -664,6 +679,12 @@ public struct FullScreenOrWindow<C: StoreUIContainer, V: View>: ViewModifier {
     let storeUI: C?
     let isModal: Bool
     let presentedContent: () -> V?
+    
+#if os(macOS)
+    var canDismissModalWindow: Bool {
+        isModal && isPresented.wrappedValue
+    }
+#endif
     
     public init(isPresented: Binding<Bool>, storeUI: C?, isModal: Bool, content: @escaping () -> V?) {
         self.isPresented = isPresented
@@ -701,6 +722,22 @@ public struct FullScreenOrWindow<C: StoreUIContainer, V: View>: ViewModifier {
         .onDisappear {
             id = nil
             storeUI?.store.cancel()
+        }
+        .transformEnvironment(\.dismissModalWindow) { action in
+            if let prevAction = action {
+                action = {
+                    prevAction()
+                    if canDismissModalWindow {
+                        isPresented.wrappedValue = false
+                    }
+                }
+            }
+            else if canDismissModalWindow {
+                action = { isPresented.wrappedValue = false }
+            }
+            else {
+                action = nil
+            }
         }
 #endif
     }
