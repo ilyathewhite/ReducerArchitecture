@@ -176,6 +176,22 @@ public extension EnvironmentValues {
     }
 }
 
+public struct NavigationPathStack: Equatable {
+    public let value: [any StoreUIContainer]
+    
+    public static func ==(lhs: NavigationPathStack, rhs: NavigationPathStack) -> Bool {
+        lhs.value.map { $0.id } == rhs.value.map { $0.id }
+    }
+}
+
+public struct NavigationPathStackKey: PreferenceKey {
+    public static let defaultValue: NavigationPathStack? = nil
+    
+    public static func reduce(value: inout NavigationPathStack?, nextValue: () -> NavigationPathStack?) {
+        value = value ?? nextValue()
+    }
+}
+
 #if canImport(SwiftUI)
 import SwiftUI
 
@@ -212,6 +228,7 @@ public struct NavigationFlow<T: StoreUINamespace>: View {
             pathContainer.root = StoreUI(root)
         }
         .environment(\.backAction, { pathContainer.pop() })
+        .preference(key: NavigationPathStackKey.self, value: .init(value: pathContainer.stack))
         .task {
             let env = NavigationEnv(pathContainer: pathContainer)
             await root.get { value in
@@ -249,6 +266,7 @@ public struct CustomNavigationFlow<T: StoreUINamespace>: View {
                 pathContainer.root = StoreUI(root)
             }
             .environment(\.backAction, { pathContainer.pop() })
+            .preference(key: NavigationPathStackKey.self, value: .init(value: pathContainer.stack))
             .task {
                 let env = NavigationEnv(pathContainer: pathContainer)
                 await root.get { value in
