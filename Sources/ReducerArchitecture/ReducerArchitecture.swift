@@ -328,10 +328,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     private func removeChildImpl(_ child: (any AnyStore)?) {
         guard let child else { return }
         assert(child.isCancelled)
-        guard let index = children.firstIndex(where: { $1 === child }) else {
-            assertionFailure()
-            return
-        }
+        guard let index = children.firstIndex(where: { $1 === child }) else { return }
         children.remove(at: index)
     }
 
