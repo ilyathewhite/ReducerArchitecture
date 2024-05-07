@@ -490,8 +490,10 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
         }
         if let logUserActions = logConfig.logUserActions {
             let actionName: String?
+            let actionDetails: String?
             switch storeAction {
             case .user(let action):
+                actionDetails = codeString(action)
                 switch action {
                 case .mutating(let mutatingAction, _, _):
                     actionName = caseName(mutatingAction)
@@ -504,9 +506,10 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
                 }
             default:
                 actionName = nil
+                actionDetails = nil
             }
             if let actionName {
-                logUserActions(actionName)
+                logUserActions(actionName, actionDetails)
             }
         }
         
@@ -726,14 +729,14 @@ extension StateStore {
         public var logActions = false
         public var saveSnapshots = false
         internal var logger: Logger
-        public var logUserActions: ((String) -> Void)?
+        public var logUserActions: ((_ actionName: String, _ actionDetails: String?) -> Void)?
 
         public init(
             logState: Bool = false,
             logActions: Bool = false,
             saveSnapshots: Bool = false,
             logger: Logger = Logger(subsystem: "ReducerStore", category: "\(StateStore.storeDefaultKey)"),
-            logUserActions: ((String) -> Void)? = nil
+            logUserActions: ((String, String?) -> Void)? = nil
         ) {
             self.logState = logState
             self.logActions = logActions
