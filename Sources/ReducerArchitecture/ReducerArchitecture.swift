@@ -70,6 +70,7 @@ public protocol AnyStore: AnyObject, Hashable, Identifiable {
     associatedtype PublishedValue
 
     nonisolated var id: UUID { get }
+    nonisolated var name: String { get }
     var isCancelled: Bool { get }
     var publishedValue: PassthroughSubject<PublishedValue, Cancel> { get }
     func publish(_ value: PublishedValue)
@@ -283,6 +284,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     }
     
     nonisolated public let id = UUID()
+    public var name: String
     private var nestedLevel = 0
     
     public var environment: Environment?
@@ -386,6 +388,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     public var hasRequest = false
     
     public init(_ initialValue: State, reducer: Reducer, env: Environment?) {
+        self.name = Self.storeDefaultKey
         self.reducer = reducer
         self.state = initialValue
         self.environment = env
