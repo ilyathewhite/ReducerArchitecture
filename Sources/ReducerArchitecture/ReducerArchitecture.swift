@@ -219,6 +219,15 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
         public static var noAction: Action {
             .none
         }
+        
+        var isPublish: Bool {
+            switch self {
+            case .publish:
+                return true
+            default:
+                return false
+            }
+        }
     }
     
     public enum StoreAction {
@@ -495,7 +504,8 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             let actionName: String?
             let actionDetails: String?
             switch storeAction {
-            case .user(let action):
+            case .user(let action), 
+                 .code(let action) where action.isPublish:
                 actionDetails = codeString(action)
                 switch action {
                 case .mutating(let mutatingAction, _, _):
