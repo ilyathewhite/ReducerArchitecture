@@ -496,7 +496,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             case .cancel:
                 return
             default:
-                logger.error("\nReceived action \n\(codeString(storeAction))\nto a store that is already cancelled.")
+                logger.warning("\nReceived action to a store that is already cancelled.")
                 return
             }
         }
@@ -756,10 +756,6 @@ extension StateStore {
             self.saveSnapshots = saveSnapshots
             self.logger = logger
             self.logUserActions = logUserActions
-        }
-        
-        var logEnabled: Bool {
-            logState || logActions
         }
     }
         
