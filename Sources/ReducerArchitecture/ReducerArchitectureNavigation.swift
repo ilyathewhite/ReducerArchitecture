@@ -99,7 +99,7 @@ public extension NavigationEnv {
 
 @MainActor
 public struct NavigationNode<T: StoreUINamespace> {
-    let store: T.Store
+    @State private var store: T.Store
     let env: NavigationEnv
     
     public init(_ store: T.Store, _ env: NavigationEnv) {
@@ -198,7 +198,7 @@ import SwiftUI
 @available(iOS 16.0, *)
 @available(macOS 13.0, *)
 public struct NavigationFlow<T: StoreUINamespace>: View {
-    let root: T.Store
+    @State private var root: T.Store
     let run: (T.PublishedValue, _ env: NavigationEnv) async -> Void
     
     @StateObject private var pathContainer = NavigationPathContainer()
