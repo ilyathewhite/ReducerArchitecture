@@ -385,6 +385,13 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
         children[key]
     }
 
+    /// Runs a child store until it produces the first value
+    public func run<T>(_ child: StateStore<T>, key: String = StateStore<T>.storeDefaultKey) async throws -> T.PublishedValue {
+        addChild(child, key: key)
+        defer { removeChild(child) }
+        return try await child.firstValue()
+    }
+
     public var logConfig = LogConfig()
     internal var logger: Logger {
         logConfig.logger
