@@ -10,6 +10,8 @@ import CombineEx
 
 @MainActor
 private final class AsyncNavigationEnvPlaceholderViewModel: AnyViewModel {
+    var children: [String : any AnyViewModel] = [:]
+    
     typealias PublishedValue = Void
 
     nonisolated let id = UUID()
@@ -18,7 +20,7 @@ private final class AsyncNavigationEnvPlaceholderViewModel: AnyViewModel {
     var hasRequest = false
     let publishedValue = PassthroughSubject<Void, Cancel>()
 
-    nonisolated static var storeDefaultKey: String { "AsyncNavigationEnvPlaceholder" }
+    nonisolated static var viewModelDefaultKey: String { "AsyncNavigationEnvPlaceholder" }
 
     func publish(_ value: Void) {
         publishedValue.send(value)

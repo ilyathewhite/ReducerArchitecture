@@ -784,7 +784,7 @@ public struct WindowContentView<C: StoreUIContainer>: View {
 extension StoreUINamespace {
     @MainActor
     public static func windowGroup() -> WindowGroup<PresentedWindowContent<UUID, WindowContentView<StoreUI<Nsp>>>> where Nsp: StoreUINamespace {
-        WindowGroup(id: Store.storeDefaultKey, for: UUID.self) { id in
+        WindowGroup(id: Store.viewModelDefaultKey, for: UUID.self) { id in
             WindowContentView<StoreUI<Nsp>>(id: id.wrappedValue)
         }
     }

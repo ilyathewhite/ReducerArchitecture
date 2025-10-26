@@ -65,136 +65,7 @@ public struct StoreLifecycleLog {
 public var storeLifecycleLog = StoreLifecycleLog()
 
 @MainActor
-// Conformance to Hashable is necessary for SwiftUI navigation
-public protocol AnyStore: AnyObject, Hashable, Identifiable {
-    associatedtype PublishedValue
-
-    nonisolated var id: UUID { get }
-    nonisolated var name: String { get }
-    var isCancelled: Bool { get }
-    var publishedValue: PassthroughSubject<PublishedValue, Cancel> { get }
-    func publish(_ value: PublishedValue)
-    func cancel()
-    
-    /// Indicates whether there is request for a published value.
-    ///
-    /// Useful for testing navigation flows.
-    var hasRequest: Bool { get set }
-    
-    nonisolated
-    static var storeDefaultKey: String { get }
-}
-
-// value, publish, cancel
-public extension AnyStore {
-    var value: AnyPublisher<PublishedValue, Cancel> {
-        publishedValue
-            .handleEvents(
-                receiveOutput: { [weak self] _ in
-                    assert(Thread.isMainThread)
-                    self?.hasRequest = false
-                },
-                receiveRequest: { [weak self] demand in
-                    assert(Thread.isMainThread)
-                    self?.hasRequest = true
-                }
-            )
-            .subscribe(on: DispatchQueue.main)
-            .receive(on: DispatchQueue.main)
-            .eraseToAnyPublisher()
-    }
-    
-    var valueResult: AnyPublisher<Result<PublishedValue, Cancel>, Never> {
-        value
-            .map { .success($0) }
-            .catch { Just(.failure($0)) }
-            .eraseToAnyPublisher()
-    }
-    
-    func firstValue() async throws -> PublishedValue {
-        defer { cancel() }
-        return try await value.first().async()
-    }
-    
-    /// A convenience API to avoid a race condition between the code that needs a first value
-    /// and the code that provides it.
-    func getRequest() async -> Void {
-        while !hasRequest {
-            await Task.yield()
-        }
-    }
-    
-    func publish(_ value: PublishedValue) {
-        if isStateStore  {
-            assertionFailure()
-        }
-        publishedValue.send(value)
-    }
-    
-    func cancel() {
-        if isStateStore  {
-            assertionFailure()
-        }
-        publishedValue.send(completion: .failure(.cancel))
-    }
-    
-    var isCancelledPublisher: AnyPublisher<Void, Never> {
-        publishedValue
-            .map { _ in false }
-            .replaceError(with: true)
-            .filter { $0 }
-            .map { _ in () }
-            .eraseToAnyPublisher()
-    }
-    
-    var isStateStore: Bool {
-        "\(type(of: self))".hasPrefix("StateStore<")
-    }
-}
-
-// Identifiable, Hashable
-public extension AnyStore {
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs === rhs
-    }
-    
-    func hash(into hasher: inout Hasher) {
-        id.hash(into: &hasher)
-    }
-}
-
-// Navigation
-public extension AnyStore {
-    var throwingAsyncValues: AsyncThrowingPublisher<AnyPublisher<PublishedValue, Cancel>> {
-        value.values
-    }
-
-    var asyncValues: AsyncPublisher<AnyPublisher<PublishedValue, Never>> {
-        value
-            .catch { _ in Empty<PublishedValue, Never>() }
-            .eraseToAnyPublisher()
-            .values
-    }
-    
-    func get(callback: @escaping (PublishedValue) async throws -> Void) async throws {
-        try await asyncValues.get(callback: callback)
-    }
-    
-    func get(callback: @escaping (PublishedValue) async -> Void) async {
-        await asyncValues.get(callback: callback)
-    }
-    
-    func getFirst(callback: @escaping (PublishedValue) async -> Void) async {
-        if let firstValue = try? await value.first().async() {
-            await callback(firstValue)
-        }
-    }
-    
-    func getFirst(callback: @escaping (PublishedValue) async throws -> Void) async throws {
-        let firstValue = try await value.first().async()
-        try await callback(firstValue)
-    }
-}
+public protocol AnyStore: AnyViewModel {}
 
 // StateStore should not be subclassed because of a bug in SwiftUI
 @MainActor
@@ -300,98 +171,15 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     internal let reducer: Reducer
     private let taskManager = TaskManager()
     
-    private var children: [String: any AnyStore] = [:]
+    public var children: [String: any AnyViewModel] = [:]
     
     /// The default store key. The value is used for child stores and for logging.
     ///
     /// Uses the store namespace description as the default key because it's unlikely for a parent store to contain
     /// more than one child store of the same type.
     nonisolated
-    public static var storeDefaultKey: String { "\(Nsp.self)" }
+    public static var viewModelDefaultKey: String { "\(Nsp.self)" }
     
-    /// Adds a child to the store. The store must not already contain a child with the provided `key`.
-    public func addChild<T>(_ child: StateStore<T>, key: String = StateStore<T>.storeDefaultKey) {
-        assert(children[key] == nil)
-        objectWillChange.send()
-        children[key] = child
-    }
-    
-    /// Removes a child from the store. If not `nil`, `child` must be a child of the store
-    /// - Parameters:
-    ///   - child: The child store to be removed.
-    ///   - delay: Whether to delay the actual removal until the next UI update.
-    ///
-    ///  `delay` is useful to allow animated transitions for removing the UI for `child`.
-    public func removeChild(_ child: (any AnyStore)?, delay: Bool = true) {
-        guard let child else { return }
-        objectWillChange.send()
-        child.cancel()
-        if delay {
-            DispatchQueue.main.async {
-                self.removeChildImpl(child)
-            }
-        }
-        else {
-            removeChildImpl(child)
-        }
-    }
-    
-    private func removeChildImpl(_ child: (any AnyStore)?) {
-        guard let child else { return }
-        assert(child.isCancelled)
-        guard let index = children.firstIndex(where: { $1 === child }) else { return }
-        children.remove(at: index)
-    }
-
-    /// Adds a child to the store. If the store already contains a child with the provided `key`, the child store
-    /// expression is not evaluated.
-    public func addChildIfNeeded<T>(_ child: @autoclosure () -> StateStore<T>, key: String = StateStore<T>.storeDefaultKey) {
-        if children[key] == nil {
-            addChild(child())
-        }
-    }
-
-    /// Returns a child store with a specific `key`.
-    ///
-    /// A child store should not be saved in `@State` or `@ObjectState` of a view because that creates a retain cycle:
-    /// View State -> Store -> Store Environmemnt -> View State or
-    /// Child View State -> Child Store -> Child Store Environment -> Child View State
-    /// The retain cycle is there even with @ObservedObject because then SwiftUI View State still adds a reference to
-    /// the store.
-    ///
-    /// The only way to break the retain cycle is to set the store environment to nil by cancelling the store. (Setting
-    /// the store environment to nil directly is dangerous because the store might still receive messages after that but
-    /// when the store is cancelled those messages are automatically ignored.)
-    ///
-    /// This is done automatically when a store is popped from the navigation stack or when its sheet is dismissed.
-    /// However, if a child store is not retained by the store itself and is saved via the view state instead, the child
-    /// store is not cancelled. Using the `child` APIs allows the child store to be cancelled automatically when its
-    /// parent store is cancelled manually or as a result of going out of scope.
-    ///
-    /// Example:
-    /// ```Swift
-    /// private var childStore: ChildStoreNsp.Store { store.child()! }
-    /// 
-    /// public init(store: Store) {
-    ///    self.store = store
-    ///    store.addChildIfNeeded(ChildStoreNsp.store())
-    /// }
-    /// ```
-    public func child<T>(key: String = StateStore<T>.storeDefaultKey) -> StateStore<T>? {
-        children[key] as? StateStore<T>
-    }
-
-    public func anyChild(key: String) -> (any AnyStore)? {
-        children[key]
-    }
-
-    /// Runs a child store until it produces the first value
-    public func run<T>(_ child: StateStore<T>, key: String = StateStore<T>.storeDefaultKey) async throws -> T.PublishedValue {
-        addChild(child, key: key)
-        defer { removeChild(child) }
-        return try await child.firstValue()
-    }
-
     public var logConfig = LogConfig()
     internal var logger: Logger {
         logConfig.logger
@@ -404,13 +192,13 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     public var hasRequest = false
     
     public init(_ initialValue: State, reducer: Reducer, env: Environment?) {
-        self.name = Self.storeDefaultKey
+        self.name = Self.viewModelDefaultKey
         self.reducer = reducer
         self.state = initialValue
         self.environment = env
 
         if storeLifecycleLog.enabled {
-            let name = Self.storeDefaultKey
+            let name = Self.viewModelDefaultKey
             if storeLifecycleLog.debug {
                 logger.debug("Allocated store \(name)\nid: \(self.id)")
             }
@@ -420,7 +208,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     
     deinit {
         if storeLifecycleLog.enabled {
-            let name = Self.storeDefaultKey
+            let name = Self.viewModelDefaultKey
             if storeLifecycleLog.debug {
                 logConfig.logger.debug("Deallocated store \(name)\nid: \(self.id)")
             }
@@ -604,7 +392,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             // after the child store is cancelled
 
             if storeLifecycleLog.enabled {
-                let name = Self.storeDefaultKey
+                let name = Self.viewModelDefaultKey
                 if storeLifecycleLog.debug {
                     logger.debug("Cancelled store \(name)\nid: \(self.id)")
                 }
@@ -755,7 +543,7 @@ extension StateStore {
             logState: Bool = false,
             logActions: Bool = false,
             saveSnapshots: Bool = false,
-            logger: Logger = Logger(subsystem: "ReducerStore", category: "\(StateStore.storeDefaultKey)"),
+            logger: Logger = Logger(subsystem: "ReducerStore", category: "\(StateStore.viewModelDefaultKey)"),
             logUserActions: ((String, String?) -> Void)? = nil
         ) {
             self.logState = logState
@@ -882,7 +670,7 @@ extension StateStore {
     @MainActor
     public func saveSnapshotsIfNeeded() {
         guard logConfig.saveSnapshots else { return }
-        let snapshotCollection = ReducerSnapshotCollection(title: Self.storeDefaultKey, snapshots: codeStringSnapshots)
+        let snapshotCollection = ReducerSnapshotCollection(title: Self.viewModelDefaultKey, snapshots: codeStringSnapshots)
         do {
             if let path = try snapshotCollection.save() {
                 logger.info("Saved reducer snapshots to \n\(path)")
