@@ -39,11 +39,6 @@ public struct NavigationEnv {
     /// Pushes the next UI component on the navigation stack.
     /// Returns the index of the pushed component on the navigation stack.
     public let push: @MainActor (any StoreUIContainer & Hashable) -> Int
-    
-    /// Pushes the next VC on the navigation stack.
-    /// Supported only for UIKit navigation.
-    /// Returns the index of the pushed component on the navigation stack.
-    public let pushVC: @MainActor (any BasicReducerArchitectureVC) -> Int
 
     /// Replaces the last UI component on the navigation stack.
     /// Returns the index of the pushed component on the navigation stack.
@@ -60,14 +55,12 @@ public struct NavigationEnv {
     public init(
         currentIndex: @escaping () -> Int,
         push: @escaping (any StoreUIContainer & Hashable) -> Int,
-        pushVC: @escaping (any BasicReducerArchitectureVC) -> Int,
         replaceTop: @escaping (any StoreUIContainer & Hashable) -> Int,
         popTo: @escaping (_: Int) -> Void
     ) {
         self.init(
             currentIndex: currentIndex,
             push: push,
-            pushVC: pushVC,
             replaceTop: replaceTop,
             popTo: popTo,
             currentStorePublisher: .init(.placeholder)
@@ -76,14 +69,12 @@ public struct NavigationEnv {
 
     init(currentIndex: @escaping () -> Int,
          push: @escaping (any StoreUIContainer & Hashable) -> Int,
-         pushVC: @escaping (any BasicReducerArchitectureVC) -> Int,
          replaceTop: @escaping (any StoreUIContainer & Hashable) -> Int,
          popTo: @escaping (_: Int) -> Void,
          currentStorePublisher: CurrentValueSubject<StoreInfo, Never>
     ) {
         self.currentIndex = currentIndex
         self.push = push
-        self.pushVC = pushVC
         self.replaceTop = replaceTop
         self.popTo = popTo
         self.currentStorePublisher = currentStorePublisher
@@ -135,35 +126,6 @@ public struct NavigationNode<T: StoreUINamespace> {
         }
     }
 }
-
-#if canImport(UIKit)
-@MainActor
-public struct NavigationVCNode<VC: BasicReducerArchitectureVC> {
-    let config: VC.Configuration
-    let env: NavigationEnv
-    
-    public init(config: VC.Configuration, env: NavigationEnv) {
-        self.config = config
-        self.env = env
-    }
-    
-    public func then(_ callback: @escaping (VC.Store.PublishedValue, Int) async throws -> Void) async throws {
-        let vc = VC.make(config)
-        let index = env.pushVC(vc)
-        try await vc.store.get { value in
-            try await callback(value, index)
-        }
-    }
-    
-    public func then(_ callback: @escaping (VC.Store.PublishedValue, Int) async -> Void) async {
-        let vc = VC.make(config)
-        let index = env.pushVC(vc)
-        await vc.store.get { value in
-            await callback(value, index)
-        }
-    }
-}
-#endif
 
 private struct BackActionKey: EnvironmentKey {
     static let defaultValue: (() -> ())? = nil
@@ -281,7 +243,36 @@ public struct CustomNavigationFlow<T: StoreUINamespace>: View {
 
 #if os(iOS)
 
-/// Same as NavigationFlow, but uses UINavigationController for navigation.
+public class HostingController<T: StoreUINamespace>: UIHostingController<T.ContentView> {
+    public let store: T.Store
+
+    public init(store: T.Store) {
+        self.store = store
+        super.init(rootView: store.contentView)
+    }
+
+    @MainActor required dynamic init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    public override func didMove(toParent parent: UIViewController?) {
+        if parent == nil {
+            store.cancel()
+        }
+    }
+}
+
+public extension UIView {
+    func align(toContainerView view: UIView) {
+        translatesAutoresizingMaskIntoConstraints = false
+        view.leftAnchor.constraint(equalTo: leftAnchor).isActive = true
+        view.rightAnchor.constraint(equalTo: rightAnchor).isActive = true
+        view.topAnchor.constraint(equalTo: topAnchor).isActive = true
+        view.bottomAnchor.constraint(equalTo: bottomAnchor).isActive = true
+    }
+}
+
+// Same as NavigationFlow, but uses UINavigationController for navigation.
 ///
 /// This is a workaround for nested navigation stacks that don't seem to be supported in SwiftUI right now.
 public struct UIKitNavigationFlow<T: StoreUINamespace>: View {
@@ -465,9 +456,6 @@ extension NavigationEnv {
             push: {
                 pathContainer.push($0)
             },
-            pushVC: { _ in
-                fatalError("Not supported for SwiftUI")
-            },
             replaceTop: {
                 pathContainer.replaceTop(newValue: $0)
             },
@@ -484,10 +472,6 @@ extension NavigationEnv {
     static func getStore(_ storeUI: some StoreUIContainer) -> any AnyStore {
         storeUI.store
     }    
-    
-    static func getStore(_ container: some BasicReducerArchitectureVC) -> any AnyStore {
-        container.store
-    }
 }
 
 #if canImport(UIKit)
@@ -524,11 +508,6 @@ extension NavigationEnv {
                 nc.pushViewController(vc, animated: true)
                 return nc.viewControllers.count - 1
             },
-            pushVC: {
-                let vc = ContainerVC(vc: $0)
-                nc.pushViewController(vc, animated: true)
-                return nc.viewControllers.count - 1
-            },
             replaceTop: {
                 let vc = Self.hostingVC($0, hostingControllerContainer)
                 replaceLastWith(nc, vc)
@@ -556,14 +535,11 @@ extension AnyStore {
 extension NavigationEnv {
     enum NavigationTestNode {
         case storeUI(any StoreUIContainer)
-        case vc(any BasicReducerArchitectureVC)
-        
+
         var store: (any AnyStore)? {
             switch self {
             case .storeUI(let storeUI):
                 return NavigationEnv.getStore(storeUI)
-            case .vc(let vc):
-                return NavigationEnv.getStore(vc)
             }
         }
     }
@@ -624,11 +600,6 @@ extension NavigationEnv {
             },
             push: {
                 stack.append(.storeUI($0))
-                updateCurrentStore()
-                return stack.count - 1
-            },
-            pushVC: {
-                stack.append(.vc($0))
                 updateCurrentStore()
                 return stack.count - 1
             },
