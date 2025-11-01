@@ -22,9 +22,4 @@ public protocol ViewModelContentView: View {
 @MainActor
 public protocol ViewModelUINamespace: ViewModelNamespace {
     associatedtype ContentView: ViewModelContentView where ContentView.Nsp == Self
-    static func updateNavigationCount(_ viewModel: ViewModel)
-}
-
-public extension ViewModelUINamespace {
-    static func updateNavigationCount(_ viewModel: ViewModel) {}
 }

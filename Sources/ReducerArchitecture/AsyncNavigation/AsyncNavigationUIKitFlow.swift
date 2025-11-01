@@ -9,13 +9,13 @@ import SwiftUI
 
 /// Native SwiftUI navigation doesn't work with nested navigation stacks.
 /// This UIKit implementation doesn't have that limitation.
-public struct AsyncNavigationUIKitFlow<T: ViewModelUINamespace>: View {
+public struct AsyncNavigationUIKitFlow<Nsp: ViewModelUINamespace>: View {
     private struct FlowImpl: UIViewControllerRepresentable {
-        let root: T.ViewModel
-        let run: (T.PublishedValue, _ env: AsyncNavigationProxy) async -> Void
+        let root: Nsp.ViewModel
+        let run: (Nsp.PublishedValue, _ env: AsyncNavigationProxy) async -> Void
 
         func makeUIViewController(context: Context) -> UINavigationController {
-            let rootVC = AsyncNavigationUIKitProxy.HostingController<T>(ViewModelUI(root))
+            let rootVC = AsyncNavigationUIKitProxy.HostingController<Nsp>(ViewModelUI(root))
             let nc = UINavigationController(rootViewController: rootVC)
             Task {
                 let navigationProxy = AsyncNavigationUIKitProxy(nc)
@@ -31,10 +31,10 @@ public struct AsyncNavigationUIKitFlow<T: ViewModelUINamespace>: View {
         }
     }
 
-    public let root: T.ViewModel
-    public let run: (T.PublishedValue, _ env: AsyncNavigationProxy) async -> Void
+    public let root: Nsp.ViewModel
+    public let run: (Nsp.PublishedValue, _ env: AsyncNavigationProxy) async -> Void
 
-    public init(root: T.ViewModel, run: @escaping (T.PublishedValue, _: AsyncNavigationProxy) async -> Void) {
+    public init(root: Nsp.ViewModel, run: @escaping (Nsp.PublishedValue, _: AsyncNavigationProxy) async -> Void) {
         self.root = root
         self.run = run
     }
