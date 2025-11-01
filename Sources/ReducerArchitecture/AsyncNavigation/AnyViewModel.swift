@@ -207,6 +207,14 @@ public extension AnyViewModel {
         }
     }
 
+    /// A convenience API, useful for testing
+    func publishOnRequest(_ value: PublishedValue) async {
+        while !hasRequest {
+            await Task.yield()
+        }
+        publish(value)
+    }
+
     func publish(_ value: PublishedValue) {
         publishedValue.send(value)
     }
