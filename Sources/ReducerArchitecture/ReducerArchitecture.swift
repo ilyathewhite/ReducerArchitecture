@@ -185,8 +185,7 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
     internal var logger: Logger {
         logConfig.logger
     }
-    private var codeStringSnapshots: [ReducerSnapshotData] = []
-    
+
     @Published public private(set) var state: State
     public private(set) var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
     public private(set) var isCancelled = false
@@ -333,11 +332,6 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             logger.debug("\(reducerInput)")
         }
         
-        if logConfig.saveSnapshots {
-            let snapshot: Snapshot = Snapshot.Input(date: .now, action: storeAction, state: state, nestedLevel: nestedLevel).snapshot
-            codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
-        }
-        
         let effect: Effect?
         let syncEffect: SyncEffect?
         switch storeAction.action {
@@ -354,11 +348,6 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
                 var reducerStateChange = "\n<-"
                 reducerStateChange.append("\n\(codeString(state))")
                 logger.debug("\(reducerStateChange)")
-            }
-            
-            if logConfig.saveSnapshots {
-                let snapshot = Snapshot.StateChange(date: .now, state: state, nestedLevel: nestedLevel).snapshot
-                codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
             }
             
         case .effect(let effectAction):
@@ -411,21 +400,16 @@ public final class StateStore<Nsp: StoreNamespace>: ObservableObject {
             logger.debug("\(reducerOutput)")
         }
         
-        if logConfig.saveSnapshots {
-            let snapshot = Snapshot.Output(
-                date: Date.now,
-                effect: effect,
-                syncEffect: syncEffect,
-                state: state,
-                nestedLevel: nestedLevel
-            )
-                .snapshot
-            codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
-        }
-        
         if let e = effect {
             addEffect(e)
         }
+    }
+}
+
+extension StateStore.Reducer where Nsp.EffectAction == Never {
+    @MainActor
+    public init(_ run: @escaping (inout Value, Nsp.MutatingAction) -> StateStore.SyncEffect) {
+        self = StateStore.Reducer(run: run, effect: { _, _, effectAction in .none })
     }
 }
 
@@ -530,258 +514,25 @@ enum StoreUIContainers {
     }
 }
 
-// MARK: -  Snapshots and Logging
+// MARK: - Logging
 
 extension StateStore {
     public struct LogConfig {
         public var logState = false
         public var logActions = false
-        public var saveSnapshots = false
         internal var logger: Logger
         public var logUserActions: ((_ actionName: String, _ actionDetails: String?) -> Void)?
 
         public init(
             logState: Bool = false,
             logActions: Bool = false,
-            saveSnapshots: Bool = false,
             logger: Logger = Logger(subsystem: "ReducerStore", category: "\(StateStore.viewModelDefaultKey)"),
             logUserActions: ((String, String?) -> Void)? = nil
         ) {
             self.logState = logState
             self.logActions = logActions
-            self.saveSnapshots = saveSnapshots
             self.logger = logger
             self.logUserActions = logUserActions
         }
-    }
-        
-    public enum Snapshot {
-        public struct Input {
-            let date: Date
-            let action: StoreAction
-            let state: State
-            let nestedLevel: Int
-            
-            var snapshot: Snapshot {
-                .input(self)
-            }
-            
-            var isFromUser: Bool {
-                action.isFromUser
-            }
-        }
-        
-        public struct StateChange {
-            let date: Date
-            let state: State
-            let nestedLevel: Int
-
-            var snapshot: Snapshot {
-                .stateChange(self)
-            }
-        }
-        
-        public struct Output {
-            let date: Date
-            let effect: Effect?
-            let syncEffect: SyncEffect?
-            let state: State
-            let nestedLevel: Int
-
-            var snapshot: Snapshot {
-                .output(self)
-            }
-        }
-        
-        case input(Input)
-        case stateChange(StateChange)
-        case output(Output)
-        
-        private static func encode<T>(_ value: T, _ logger: Logger) -> Data? {
-            guard let codable = value as? Codable else { return nil }
-            let encoder = JSONEncoder()
-            do {
-                return try encoder.encode(codable)
-            }
-            catch {
-                logger.error(message: "Failed to encode \(value)", error)
-                return nil
-            }
-        }
-        
-        public func logData(errorLogger logger: Logger) -> ReducerSnapshotData {
-            switch self {
-            case .input(let input):
-                let mutatingAction: MutatingAction?
-                switch input.action.action {
-                case .mutating(let action, _, _):
-                    mutatingAction = action
-                default:
-                    mutatingAction = nil
-                }
-                
-                return ReducerSnapshotData.Input(
-                    date: input.date,
-                    action: codeString(input.action),
-                    encodedAction: Self.encode(input.action, logger),
-                    encodedMutatingAction: mutatingAction.flatMap { Self.encode($0, logger) },
-                    state: propertyCodeStrings(input.state),
-                    encodedState: Self.encode(input.state, logger),
-                    nestedLevel: input.nestedLevel
-                )
-                .snapshotData
-                
-            case .stateChange(let stateChange):
-                return ReducerSnapshotData.StateChange(
-                    date: stateChange.date,
-                    state: propertyCodeStrings(stateChange.state),
-                    encodedState: Self.encode(stateChange.state, logger),
-                    nestedLevel: stateChange.nestedLevel
-                )
-                .snapshotData
-                
-            case .output(let output):
-                return ReducerSnapshotData.Output(
-                    date: output.date,
-                    effect: codeString(output.effect),
-                    encodedEffect: (output.effect is any Equatable) ? output.effect.flatMap { Self.encode($0, logger) } : nil,
-                    encodedSyncEffect: (output.syncEffect is any Equatable) ? output.syncEffect.flatMap { Self.encode($0, logger) } : nil,
-                    state: propertyCodeStrings(output.state),
-                    encodedState: (output.state is any Equatable) ? Self.encode(output.state, logger) : nil,
-                    nestedLevel: output.nestedLevel
-                )
-                .snapshotData
-            }
-        }
-        
-        public var isFromUser: Bool {
-            switch self {
-            case .input(let input):
-                return input.isFromUser
-            default:
-                return false
-            }
-        }
-    }
-    
-    private func clearSnapshots() {
-        codeStringSnapshots = []
-    }
-    
-    @MainActor
-    public func saveSnapshotsIfNeeded() {
-        guard logConfig.saveSnapshots else { return }
-        let snapshotCollection = ReducerSnapshotCollection(title: Self.viewModelDefaultKey, snapshots: codeStringSnapshots)
-        do {
-            if let path = try snapshotCollection.save() {
-                logger.info("Saved reducer snapshots to \n\(path)")
-                clearSnapshots()
-            }
-            else {
-                logger.error("Failed to save snapshots.")
-            }
-        }
-        catch {
-            logger.error(message: "Failed to save snapshots.", error)
-        }
-    }
-}
-
-extension StateStore.Action: Codable
-where Nsp.MutatingAction: Codable, Nsp.EffectAction: Codable, Nsp.PublishedValue: Codable {
-    public enum Base: Codable {
-        case mutating(Nsp.MutatingAction)
-        case effect(Nsp.EffectAction)
-        case publish(Nsp.PublishedValue)
-        case cancel
-        case none
-        
-        init(_ value: StateStore.Action) {
-            switch value {
-            case .mutating(let action, _, _):
-                self = .mutating(action)
-            case .effect(let action):
-                self = .effect(action)
-            case .publish(let value):
-                self = .publish(value)
-            case .cancel:
-                self = .cancel
-            case .none:
-                self = .none
-            }
-        }
-    }
-    
-    init(_ value: Base) {
-        switch value {
-        case .mutating(let action):
-            self = .mutating(action)
-        case .effect(let action):
-            self = .effect(action)
-        case .publish(let value):
-            self = .publish(value)
-        case .cancel:
-            self = .cancel
-        case .none:
-            self = .none
-            
-        }
-    }
-    
-    public func encode(to encoder: Encoder) throws {
-        try Base(self).encode(to: encoder)
-    }
-    
-    public init(from decoder: Decoder) throws {
-        self = try .init(Base.init(from: decoder))
-    }
-}
-
-extension StateStore.Action: Equatable
-where Nsp.MutatingAction: Equatable, Nsp.EffectAction: Equatable, Nsp.PublishedValue: Equatable {
-}
-
-extension StateStore.StoreAction: Equatable where StateStore.Action: Equatable {
-}
-
-extension StateStore.StoreAction: Codable where StateStore.Action: Codable {
-}
-
-extension StateStore.Effect where StateStore.Action: Equatable {
-    func isEqual(to other: Self) -> Bool? {
-        switch (self, other) {
-        case let (.action(action), .action(otherAction)):
-            return action == otherAction
-        case let (.actions(actions), .actions(otherActions)):
-            return actions == otherActions
-        case (.asyncAction, .asyncAction):
-            return nil
-        case (.asyncActions, .asyncActions):
-            return nil
-        case (.asyncActionSequence, .asyncActionSequence):
-            return nil
-        case (.publisher, .publisher):
-            return nil
-        case (.none, .none):
-            return true
-        default:
-            if codeString(self) == codeString(other) { // maybe unknown new case
-                return nil
-            }
-            return false
-        }
-    }
-}
-
-extension StateStore.SyncEffect: Codable where StateStore.Action: Codable {
-}
-
-extension StateStore.SyncEffect: Equatable where StateStore.Action: Equatable {
-}
-
-extension StateStore.Reducer where Nsp.EffectAction == Never {
-    @MainActor
-    public init(_ run: @escaping (inout Value, Nsp.MutatingAction) -> StateStore.SyncEffect) {
-        self = StateStore.Reducer(run: run, effect: { _, _, effectAction in .none })
     }
 }
