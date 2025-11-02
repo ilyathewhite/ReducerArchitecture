@@ -33,7 +33,8 @@ extension StoreNamespace {
     public typealias Nsp = Self
     public typealias Store = StateStore<Self>
     public typealias Reducer = Store.Reducer
-    
+    public typealias ViewModel = Store
+
     @MainActor
     public static func reducer() -> Reducer where MutatingAction == Void, EffectAction == Never {
         .init { _, _ in .none }

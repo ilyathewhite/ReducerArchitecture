@@ -212,7 +212,7 @@ extension StateStore {
 #if canImport(SwiftUI)
 import SwiftUI
 
-public enum NavigationEnvRootTestStore: StoreNamespace {
+public enum NavigationEnvRootTestStoreNsp: StoreNamespace, ViewModelNamespace {
     public typealias PublishedValue = Void
     
     public typealias StoreEnvironment = Never
@@ -224,16 +224,16 @@ public enum NavigationEnvRootTestStore: StoreNamespace {
     }
 }
 
-public extension NavigationEnvRootTestStore {
+public extension NavigationEnvRootTestStoreNsp {
     @MainActor
     static func store(actionName: String) -> Store {
         Store(.init(actionName: actionName), reducer: reducer())
     }
 }
 
-extension NavigationEnvRootTestStore: StoreUINamespace {
+extension NavigationEnvRootTestStoreNsp: StoreUINamespace, ViewModelUINamespace {
     public struct ContentView: StoreContentView {
-        public typealias Nsp = NavigationEnvRootTestStore
+        public typealias Nsp = NavigationEnvRootTestStoreNsp
         @ObservedObject public var store: Store
         
         public init(store: Store) {

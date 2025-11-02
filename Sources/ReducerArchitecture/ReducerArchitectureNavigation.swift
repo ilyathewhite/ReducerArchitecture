@@ -348,7 +348,6 @@ public class NavigationPathContainer: ObservableObject {
     }
     
     public func push(_ newValue: any StoreUIContainer & Hashable) -> Int {
-        defer { newValue.updateNavigationCount() }
         return pushImpl(newValue)
     }
     
@@ -389,12 +388,6 @@ public class NavigationPathContainer: ObservableObject {
         internalChange = true
         defer {
             internalChange = false
-            if let last = stack.last {
-                last.updateNavigationCount()
-            }
-            else {
-                root?.updateNavigationCount()
-            }
         }
 
         guard -1 <= index, index < stack.count else {

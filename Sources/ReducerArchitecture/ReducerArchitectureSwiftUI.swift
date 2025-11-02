@@ -43,20 +43,25 @@ public extension StateStore {
 }
 
 @MainActor
-public protocol StoreContentView: View {
-    associatedtype Nsp: StoreNamespace
+public protocol StoreContentView: ViewModelContentView where Nsp: StoreNamespace {
     typealias Store = Nsp.Store
+    typealias ViewModel = Store
     var store: Store { get }
     init(store: Store)
 }
 
-public protocol StoreUINamespace: StoreNamespace {
-    associatedtype ContentView: StoreContentView where ContentView.Nsp == Self
-    static func updateNavigationCount(_ store: Store) -> Void
+extension StoreContentView {
+    public init(viewModel: Store) {
+        self.init(store: viewModel)
+    }
+
+    public var viewModel: Store {
+        store
+    }
 }
 
-public extension StoreUINamespace {
-    static func updateNavigationCount(_ store: Store) -> Void {}
+public protocol StoreUINamespace: StoreNamespace, ViewModelNamespace {
+    associatedtype ContentView: StoreContentView where ContentView.Nsp == Self
 }
 
 public extension StateStore where Nsp: StoreUINamespace {
@@ -102,11 +107,6 @@ extension StoreUIContainer {
     @MainActor
     public func cancel() {
         store.cancel()
-    }
-    
-    @MainActor
-    public func updateNavigationCount() {
-        Nsp.updateNavigationCount(store)
     }
 }
 
