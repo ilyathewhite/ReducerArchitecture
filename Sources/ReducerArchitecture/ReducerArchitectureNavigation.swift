@@ -9,6 +9,16 @@ import Combine
 import CombineEx
 import os
 
+public extension StoreContentView where Nsp: StoreUINamespace {
+    var viewModel: Store {
+        store
+    }
+
+    init(viewModel: Store) {
+        self.init(store: viewModel)
+    }
+}
+
 private enum NavigationEnvPlaceholder: StoreNamespace {
     typealias PublishedValue = Void
     typealias StoreEnvironment = Never

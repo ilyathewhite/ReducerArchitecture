@@ -43,24 +43,14 @@ public extension StateStore {
 }
 
 @MainActor
-public protocol StoreContentView: ViewModelContentView where Nsp: StoreNamespace {
+public protocol StoreContentView: View {
+    associatedtype Nsp: StoreNamespace
     typealias Store = Nsp.Store
-    typealias ViewModel = Store
     var store: Store { get }
     init(store: Store)
 }
 
-extension StoreContentView {
-    public init(viewModel: Store) {
-        self.init(store: viewModel)
-    }
-
-    public var viewModel: Store {
-        store
-    }
-}
-
-public protocol StoreUINamespace: StoreNamespace, ViewModelNamespace {
+public protocol StoreUINamespace: StoreNamespace {
     associatedtype ContentView: StoreContentView where ContentView.Nsp == Self
 }
 
