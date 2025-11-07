@@ -16,63 +16,7 @@ import SwiftUI
 import Combine
 import CombineEx
 
-public protocol BasicReducerArchitectureVC: UIViewController {
-    associatedtype Store: AnyStore
-    associatedtype Configuration
-
-    var store: Store { get }
-    static func make(_ configuration: Configuration) -> Self
-}
-
-public extension BasicReducerArchitectureVC {
-    typealias Value = Store.PublishedValue
-
-    @MainActor
-    var value: AnyPublisher<Store.PublishedValue, Cancel> {
-        store.value
-    }
-
-    @MainActor
-    func publish(_ value: Value) {
-        store.publish(value)
-    }
-
-    @MainActor
-    func cancel() {
-        store.cancel()
-    }
-}
-
 #if canImport(UIKit)
-
-public class ContainerVC: UIViewController {
-    let vc: any BasicReducerArchitectureVC
-    
-    init(vc: any BasicReducerArchitectureVC) {
-        self.vc = vc
-        super.init(nibName: nil, bundle: nil)
-    }
-    
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override public func viewDidLoad() {
-        super.viewDidLoad()
-        
-        addChild(vc)
-        view.addSubview(vc.view)
-        vc.didMove(toParent: self)
-        vc.view.align(toContainerView: view)
-    }
-    
-    override public func didMove(toParent parent: UIViewController?) {
-        super.didMove(toParent: parent)
-        if parent == nil {
-            vc.store.cancel()
-        }
-    }
-}
 
 public class HostingController<T: StoreUINamespace>: UIHostingController<T.ContentView> {
     public let store: T.Store

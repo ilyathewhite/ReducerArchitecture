@@ -38,11 +38,6 @@ public struct NavigationEnv {
     /// Returns the index of the pushed component on the navigation stack.
     public let push: @MainActor (any StoreUIContainer & Hashable) -> Int
 
-    /// Pushes the next VC on the navigation stack.
-    /// Supported only for UIKit navigation.
-    /// Returns the index of the pushed component on the navigation stack.
-    public let pushVC: @MainActor (any BasicReducerArchitectureVC) -> Int
-
     /// Replaces the last UI component on the navigation stack.
     /// Returns the index of the pushed component on the navigation stack.
     public let replaceTop: @MainActor (any StoreUIContainer & Hashable) -> Int
@@ -58,14 +53,12 @@ public struct NavigationEnv {
     public init(
         currentIndex: @escaping () -> Int,
         push: @escaping (any StoreUIContainer & Hashable) -> Int,
-        pushVC: @escaping (any BasicReducerArchitectureVC) -> Int,
         replaceTop: @escaping (any StoreUIContainer & Hashable) -> Int,
         popTo: @escaping (_: Int) -> Void
     ) {
         self.init(
             currentIndex: currentIndex,
             push: push,
-            pushVC: pushVC,
             replaceTop: replaceTop,
             popTo: popTo,
             currentStorePublisher: .init(.placeholder)
@@ -74,14 +67,12 @@ public struct NavigationEnv {
 
     init(currentIndex: @escaping () -> Int,
          push: @escaping (any StoreUIContainer & Hashable) -> Int,
-         pushVC: @escaping (any BasicReducerArchitectureVC) -> Int,
          replaceTop: @escaping (any StoreUIContainer & Hashable) -> Int,
          popTo: @escaping (_: Int) -> Void,
          currentStorePublisher: CurrentValueSubject<StoreInfo, Never>
     ) {
         self.currentIndex = currentIndex
         self.push = push
-        self.pushVC = pushVC
         self.replaceTop = replaceTop
         self.popTo = popTo
         self.currentStorePublisher = currentStorePublisher

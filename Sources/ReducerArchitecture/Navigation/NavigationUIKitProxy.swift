@@ -39,11 +39,6 @@ extension NavigationEnv {
                 nc.pushViewController(vc, animated: true)
                 return nc.viewControllers.count - 1
             },
-            pushVC: {
-                let vc = ContainerVC(vc: $0)
-                nc.pushViewController(vc, animated: true)
-                return nc.viewControllers.count - 1
-            },
             replaceTop: {
                 let vc = Self.hostingVC($0, hostingControllerContainer)
                 replaceLastWith(nc, vc)

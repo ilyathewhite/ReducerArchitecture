@@ -11,10 +11,6 @@ extension NavigationEnv {
     static func getStore(_ storeUI: some StoreUIContainer) -> any AnyStore {
         storeUI.store
     }
-
-    static func getStore(_ container: some BasicReducerArchitectureVC) -> any AnyStore {
-        container.store
-    }
 }
 
 extension AnyStore {
@@ -29,14 +25,11 @@ extension AnyStore {
 extension NavigationEnv {
     enum NavigationTestNode {
         case storeUI(any StoreUIContainer)
-        case vc(any BasicReducerArchitectureVC)
 
         var store: (any AnyStore)? {
             switch self {
             case .storeUI(let storeUI):
                 return NavigationEnv.getStore(storeUI)
-            case .vc(let vc):
-                return NavigationEnv.getStore(vc)
             }
         }
     }
@@ -97,11 +90,6 @@ extension NavigationEnv {
             },
             push: {
                 stack.append(.storeUI($0))
-                updateCurrentStore()
-                return stack.count - 1
-            },
-            pushVC: {
-                stack.append(.vc($0))
                 updateCurrentStore()
                 return stack.count - 1
             },

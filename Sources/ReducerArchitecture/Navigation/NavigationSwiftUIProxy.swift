@@ -15,9 +15,6 @@ extension NavigationEnv {
             push: {
                 pathContainer.push($0)
             },
-            pushVC: { _ in
-                fatalError("Not supported for SwiftUI")
-            },
             replaceTop: {
                 pathContainer.replaceTop(newValue: $0)
             },
