@@ -10,22 +10,22 @@ import ReducerArchitecture
 @MainActor
 struct AppFlow {
     let flow: String
-    let env: NavigationEnv
-    
+    let proxy: NavigationProxy
+
     func pickString(title: String?) -> NavigationNode<StringPicker> {
-        .init(StringPicker.store(title: title), env)
+        .init(StringPicker.store(title: title), proxy)
     }
 
     func pickInt() -> NavigationNode<IntPicker> {
-        .init(IntPicker.store(), env)
+        .init(IntPicker.store(), proxy)
     }
 
     func pickDelimiter() -> NavigationNode<DelimiterPicker> {
-        .init(DelimiterPicker.store(), env)
+        .init(DelimiterPicker.store(), proxy)
     }
     
     func finish(result: String) -> NavigationNode<Done> {
-        .init(Done.store(value: result), env)
+        .init(Done.store(value: result), proxy)
     }
     
     func pickStrings(result: [String], remainingCount: Int, callback: @escaping ([String]) async -> Void) async {
@@ -42,7 +42,7 @@ struct AppFlow {
     }
     
     func run() async {
-        let rootIndex = env.currentIndex()
+        let rootIndex = proxy.currentIndex
         switch flow {
         case "Concatenate":
             await pickInt().then { count, _ in
@@ -50,7 +50,7 @@ struct AppFlow {
                     await pickStrings(result: [], remainingCount: count) { strings in
                         let result = strings.joined(separator: delimiter.rawValue)
                         await finish(result: result).then { _, _ in
-                            env.popTo(rootIndex)
+                            proxy.popTo(rootIndex)
                         }
                     }
                 }
@@ -60,14 +60,14 @@ struct AppFlow {
             await pickInt().then { intValue, _ in
                 await pickString(title: nil).then { stringValue, _ in
                     await finish(result: "\(intValue), \(stringValue)").then { _, _ in
-                        env.popTo(rootIndex)
+                        proxy.popTo(rootIndex)
                     }
                 }
             }
             
         default:
             await finish(result: "Unknown Flow").then { _, _ in
-                env.popTo(rootIndex)
+                proxy.popTo(rootIndex)
             }
         }
     }

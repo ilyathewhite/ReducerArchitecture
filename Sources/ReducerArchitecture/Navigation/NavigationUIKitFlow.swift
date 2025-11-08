@@ -14,9 +14,9 @@ import UIKit
 /// This is a workaround for nested navigation stacks that don't seem to be supported in SwiftUI right now.
 public struct UIKitNavigationFlow<T: StoreUINamespace>: View {
     public let root: T.Store
-    public let run: (T.PublishedValue, _ env: NavigationEnv) async -> Void
+    public let run: (T.PublishedValue, _ proxy: NavigationProxy) async -> Void
 
-    public init(root: T.Store, run: @escaping (T.PublishedValue, _: NavigationEnv) async -> Void) {
+    public init(root: T.Store, run: @escaping (T.PublishedValue, _: NavigationProxy) async -> Void) {
         self.root = root
         self.run = run
     }
@@ -30,9 +30,9 @@ public struct UIKitNavigationFlow<T: StoreUINamespace>: View {
 // Cannot use this struct directly due to limitations related to safe area.
 struct UIKitNavigationFlowImpl<T: StoreUINamespace>: UIViewControllerRepresentable {
     let root: T.Store
-    let run: (T.PublishedValue, _ env: NavigationEnv) async -> Void
+    let run: (T.PublishedValue, _ env: NavigationProxy) async -> Void
 
-    init(root: T.Store, run: @escaping (T.PublishedValue, _: NavigationEnv) async -> Void) {
+    init(root: T.Store, run: @escaping (T.PublishedValue, _: NavigationProxy) async -> Void) {
         self.root = root
         self.run = run
     }
@@ -46,9 +46,9 @@ struct UIKitNavigationFlowImpl<T: StoreUINamespace>: UIViewControllerRepresentab
         let rootVC = HostingController(store: root)
         let nc = UINavigationController(rootViewController: rootVC)
         Task {
-            let env = NavigationEnv(nc, replaceLastWith: { _, _  in })
+            let navigationProxy = NavigationUIKitProxy(nc)
             await root.get { value in
-                await run(value, env)
+                await run(value, navigationProxy)
             }
         }
 

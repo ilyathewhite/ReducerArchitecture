@@ -11,11 +11,11 @@ import SwiftUI
 
 public struct CustomNavigationFlow<T: StoreUINamespace>: View {
     let root: T.Store
-    let run: (T.PublishedValue, _ env: NavigationEnv) async -> Void
+    let run: (T.PublishedValue, _ proxy: NavigationProxy) async -> Void
 
     @StateObject private var pathContainer = NavigationPathContainer()
 
-    public init(root: T.Store, run: @escaping (T.PublishedValue, _: NavigationEnv) async -> Void) {
+    public init(root: T.Store, run: @escaping (T.PublishedValue, _: NavigationProxy) async -> Void) {
         self.root = root
         self.run = run
     }
@@ -37,9 +37,8 @@ public struct CustomNavigationFlow<T: StoreUINamespace>: View {
             .environment(\.backAction, { pathContainer.pop() })
             .preference(key: NavigationPathStackKey.self, value: .init(value: pathContainer.stack))
             .task {
-                let env = NavigationEnv(pathContainer: pathContainer)
                 await root.get { value in
-                    await run(value, env)
+                    await run(value, pathContainer)
                 }
             }
         }

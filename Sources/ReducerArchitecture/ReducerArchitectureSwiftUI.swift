@@ -98,7 +98,12 @@ extension StoreUIContainer {
     public var value: Nsp.Store.ValuePublisher {
         store.value
     }
-    
+
+    @MainActor
+    public var anyStore: any AnyStore {
+        store
+    }
+
     @MainActor
     public func cancel() {
         store.cancel()

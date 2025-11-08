@@ -10,8 +10,8 @@ import ReducerArchitecture
 
 struct ContentView: View {
     var body: some View {
-        NavigationFlow(root: StringPicker.store(title: "Pick flow")) { flow, env in
-            await AppFlow(flow: flow, env: env).run()
+        NavigationFlow(root: StringPicker.store(title: "Pick flow")) { flow, proxy in
+            await AppFlow(flow: flow, proxy: proxy).run()
         }
     }
 }

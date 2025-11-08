@@ -37,14 +37,4 @@ public class HostingController<T: StoreUINamespace>: UIHostingController<T.Conte
     }
 }
 
-public extension UIView {
-    func align(toContainerView view: UIView) {
-        translatesAutoresizingMaskIntoConstraints = false
-        view.leftAnchor.constraint(equalTo: leftAnchor).isActive = true
-        view.rightAnchor.constraint(equalTo: rightAnchor).isActive = true
-        view.topAnchor.constraint(equalTo: topAnchor).isActive = true
-        view.bottomAnchor.constraint(equalTo: bottomAnchor).isActive = true
-    }
-}
-
 #endif

@@ -8,47 +8,37 @@
 #if canImport(UIKit)
 import UIKit
 
-extension NavigationEnv {
-    static func hostingVC(_ storeUI: some StoreUIContainer, _ container: @escaping () -> UIViewController?) -> UIViewController {
-        let vc = HostingController(store: storeUI.store)
-
-        if let appVC = container() {
-            appVC.addChild(vc)
-            appVC.view.addSubview(vc.view)
-            vc.didMove(toParent: appVC)
-            vc.view.align(toContainerView: appVC.view)
-            return appVC
-        }
-        else {
-            return vc
-        }
+class NavigationUIKitProxy: NavigationProxy {
+    static func hostingVC(_ storeUI: some StoreUIContainer) -> UIViewController {
+        HostingController(store: storeUI.store)
     }
 
-    @MainActor
-    public init(
-        _ nc: UINavigationController,
-        replaceLastWith: @escaping (UINavigationController, UIViewController) -> Void,
-        hostingControllerContainer: @escaping () -> UIViewController? = { nil }
-    ) {
-        self.init(
-            currentIndex: {
-                nc.viewControllers.count - 1
-            },
-            push: {
-                let vc = Self.hostingVC($0, hostingControllerContainer)
-                nc.pushViewController(vc, animated: true)
-                return nc.viewControllers.count - 1
-            },
-            replaceTop: {
-                let vc = Self.hostingVC($0, hostingControllerContainer)
-                replaceLastWith(nc, vc)
-                return nc.viewControllers.count - 1
-            },
-            popTo: {
-                let vc = nc.viewControllers[$0]
-                nc.popToViewController(vc, animated: true)
-            }
-        )
+    private var nc: UINavigationController
+
+    public init(_ nc: UINavigationController) {
+        self.nc = nc
+    }
+
+    var currentIndex: Int {
+        nc.viewControllers.count - 1
+    }
+
+    public func push<Nsp: StoreUINamespace>(_ storeUI: StoreUI<Nsp>) -> Int {
+        let vc = Self.hostingVC(storeUI)
+        nc.pushViewController(vc, animated: true)
+        return nc.viewControllers.count - 1
+    }
+
+    public func replaceTop<Nsp: StoreUINamespace>(with storeUI: StoreUI<Nsp>) -> Int {
+        guard !nc.viewControllers.isEmpty else { return -1 }
+        let vc = Self.hostingVC(storeUI)
+        nc.viewControllers[nc.viewControllers.count - 1] = vc
+        return nc.viewControllers.count - 1
+    }
+
+    func popTo(_ index: Int) {
+        let vc = nc.viewControllers[index]
+        nc.popToViewController(vc, animated: true)
     }
 }
 
