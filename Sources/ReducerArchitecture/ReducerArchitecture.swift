@@ -702,29 +702,6 @@ extension StateStore: AnyStore {
     }
 }
 
-@MainActor
-enum StoreUIContainers {
-    private static var dict: [UUID: any StoreUIContainer] = [:]
-
-    static func add(_ storeUI: any StoreUIContainer) {
-        guard dict[storeUI.id] == nil else { return }
-        dict[storeUI.id] = storeUI
-    }
-    
-    static func remove(id: UUID) {
-        dict.removeValue(forKey: id)
-    }
-    
-    static func get<C: StoreUIContainer>(id: UUID) -> C? {
-        guard let anyStoreUI = dict[id] else { return nil }
-        guard let storeUI = anyStoreUI as? C else {
-            assertionFailure()
-            return nil
-        }
-        return storeUI
-    }
-}
-
 extension StateStore {
     public struct LogConfig {
         public var logState = false

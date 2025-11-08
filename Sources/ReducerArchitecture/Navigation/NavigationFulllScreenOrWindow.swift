@@ -10,6 +10,29 @@ import CombineEx
 import os
 import SwiftUI
 
+@MainActor
+enum StoreUIContainers {
+    private static var dict: [UUID: any StoreUIContainer] = [:]
+
+    static func add(_ storeUI: any StoreUIContainer) {
+        guard dict[storeUI.id] == nil else { return }
+        dict[storeUI.id] = storeUI
+    }
+
+    static func remove(id: UUID) {
+        dict.removeValue(forKey: id)
+    }
+
+    static func get<C: StoreUIContainer>(id: UUID) -> C? {
+        guard let anyStoreUI = dict[id] else { return nil }
+        guard let storeUI = anyStoreUI as? C else {
+            assertionFailure()
+            return nil
+        }
+        return storeUI
+    }
+}
+
 // Sheet or Window
 
 #if os(macOS)
@@ -148,8 +171,6 @@ public struct WindowContentView<C: StoreUIContainer>: View {
     }
 }
 
-@available(iOS 16.0, *)
-@available(macOS 13.0, *)
 extension StoreUINamespace {
     @MainActor
     public static func windowGroup() -> WindowGroup<PresentedWindowContent<UUID, WindowContentView<StoreUI<Nsp>>>> where Nsp: StoreUINamespace {
