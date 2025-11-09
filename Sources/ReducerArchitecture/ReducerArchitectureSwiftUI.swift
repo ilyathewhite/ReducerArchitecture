@@ -100,7 +100,7 @@ extension StoreUIContainer {
     }
 
     @MainActor
-    public var anyStore: any AnyStore {
+    public var anyStore: any BasicViewModel {
         store
     }
 

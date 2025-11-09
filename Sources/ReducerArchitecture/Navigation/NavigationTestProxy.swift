@@ -7,15 +7,6 @@
 
 import Combine
 
-extension AnyStore {
-    public func publishOnRequest(_ value: PublishedValue) async {
-        while !hasRequest {
-            await Task.yield()
-        }
-        publish(value)
-    }
-}
-
 class NavigationTestProxy: NavigationProxy {
     enum Placeholder: StoreNamespace {
         typealias PublishedValue = Void
@@ -33,7 +24,7 @@ class NavigationTestProxy: NavigationProxy {
     @MainActor
     struct StoreInfo {
         let timeIndex: Int
-        let store: any AnyStore
+        let store: any BasicViewModel
 
         static let placeholder = Self.init(timeIndex: -1, store: Placeholder.store())
     }
@@ -62,7 +53,7 @@ class NavigationTestProxy: NavigationProxy {
     ///
     /// Used only for testing.
     @MainActor
-    public func getStore<T: AnyStore>(_ type: T.Type, _ timeIndex: inout Int) async throws -> T {
+    public func getStore<T: BasicViewModel>(_ type: T.Type, _ timeIndex: inout Int) async throws -> T {
         let value = await currentStorePublisher.values.first(where: { $0.timeIndex == timeIndex })
         guard let store = value?.store as? T else {
             throw CurrentStoreError.typeMismatch
@@ -115,7 +106,7 @@ class NavigationTestProxy: NavigationProxy {
         }
         let k = stack.count - 1 - index
         // cancel order should be in reverse of push order
-        var valuesToCancel: [any AnyStore] = []
+        var valuesToCancel: [any BasicViewModel] = []
         for _ in 0..<k {
             let store = stack.removeLast()
             valuesToCancel.append(store.anyStore)
