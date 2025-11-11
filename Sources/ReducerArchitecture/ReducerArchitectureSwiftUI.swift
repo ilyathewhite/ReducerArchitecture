@@ -43,15 +43,15 @@ public extension StateStore {
 }
 
 @MainActor
-public protocol StoreContentView: View {
+public protocol StoreContentView: ViewModelContentView {
     associatedtype Nsp: StoreNamespace
     typealias Store = Nsp.Store
+    typealias ViewModel = Store
     var store: Store { get }
-    init(store: Store)
 }
 
-public protocol StoreUINamespace: StoreNamespace {
-    associatedtype ContentView: StoreContentView where ContentView.Nsp == Self
+public protocol StoreUINamespace: StoreNamespace, ViewModelUINamespace
+where ContentView: StoreContentView, ContentView.Nsp == Self, ViewModel == Store {
     static func updateNavigationCount(_ store: Store) -> Void
 }
 
@@ -61,77 +61,10 @@ public extension StoreUINamespace {
 
 public extension StateStore where Nsp: StoreUINamespace {
     var contentView: Nsp.ContentView {
-        Nsp.ContentView(store: self)
+        Nsp.ContentView(self)
     }
 }
 
-/// A type that can be used to create a view from a store. Used in APIs related to navigation.
-///
-/// `store.contentView` also provides a way to create a view from the store, but using store directly is not possible
-/// with `NavigationEnv` because the environment uses closures, and the closures whould have to be generic since
-/// `Store` is a generic class with the `Nsp` type parameter.
-///
-/// Presentation APIs also use `StoreUIContainer`. This makes it easier to replace presentation with push navigation
-/// and vice versa.
-public protocol StoreUIContainer<Nsp>: Hashable, Identifiable {
-    associatedtype Nsp: StoreUINamespace
-    var store: Nsp.Store { get }
-    init(_ store: Nsp.Store)
-}
-
-extension StoreUIContainer {
-    @MainActor
-    public func makeView() -> some View {
-        store.contentView.id(store.id)
-    }
-    
-    @MainActor
-    public func makeAnyView() -> AnyView {
-        AnyView(makeView())
-    }
-    
-    public var id: Nsp.Store.ID {
-        store.id
-    }
-    
-    @MainActor
-    public var value: Nsp.Store.ValuePublisher {
-        store.value
-    }
-
-    @MainActor
-    public var anyStore: any BasicViewModel {
-        store
-    }
-
-    @MainActor
-    public func cancel() {
-        store.cancel()
-    }
-    
-    @MainActor
-    public func updateNavigationCount() {
-        Nsp.updateNavigationCount(store)
-    }
-}
-
-public struct StoreUI<Nsp: StoreUINamespace>: StoreUIContainer {
-    public static func == (lhs: StoreUI<Nsp>, rhs: StoreUI<Nsp>) -> Bool {
-        lhs.store === rhs.store
-    }
-    
-    public let store: Nsp.Store
-
-    public init(_ store: Nsp.Store) {
-        self.store = store
-    }
-}
-
-extension StoreUI {
-    public init?(_ store: Nsp.Store?) {
-        guard let store else { return nil }
-        self.init(store)
-    }
-}
+public typealias StoreUI<Nsp> = ViewModelUI<Nsp> where Nsp: StoreUINamespace
 
 #endif

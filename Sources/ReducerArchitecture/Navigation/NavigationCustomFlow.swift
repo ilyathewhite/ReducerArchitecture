@@ -9,13 +9,14 @@ import SwiftUI
 
 #if os(macOS)
 
-public struct CustomNavigationFlow<T: StoreUINamespace>: View {
-    let root: T.Store
-    let run: (T.PublishedValue, _ proxy: NavigationProxy) async -> Void
+public struct CustomNavigationFlow<Nsp: ViewModelUINamespace>: View {
+    public typealias RootViewModel = Nsp.ViewModel
+    let root: RootViewModel
+    let run: (RootViewModel.PublishedValue, _ proxy: NavigationProxy) async -> Void
 
     @StateObject private var pathContainer = NavigationPathContainer()
 
-    public init(root: T.Store, run: @escaping (T.PublishedValue, _: NavigationProxy) async -> Void) {
+    public init(root: RootViewModel, run: @escaping (RootViewModel.PublishedValue, _: NavigationProxy) async -> Void) {
         self.root = root
         self.run = run
     }
@@ -23,7 +24,7 @@ public struct CustomNavigationFlow<T: StoreUINamespace>: View {
     public var body: some View {
         GeometryReader { proxy in
             HStack(spacing: 0) {
-                root.contentView
+                Nsp.ContentView(root)
                     .frame(width: proxy.size.width)
                 ForEach(pathContainer.stack, id: \.id) { storeUI in
                     storeUI.makeAnyView()
@@ -32,7 +33,7 @@ public struct CustomNavigationFlow<T: StoreUINamespace>: View {
             }
             .frame(width: proxy.size.width, alignment: .trailing)
             .onAppear {
-                pathContainer.root = StoreUI(root)
+                pathContainer.root = ViewModelUI<Nsp>(root)
             }
             .environment(\.backAction, { pathContainer.pop() })
             .preference(key: NavigationPathStackKey.self, value: .init(value: pathContainer.stack))
@@ -46,3 +47,4 @@ public struct CustomNavigationFlow<T: StoreUINamespace>: View {
 }
 
 #endif
+

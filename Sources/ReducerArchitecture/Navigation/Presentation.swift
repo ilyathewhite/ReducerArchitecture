@@ -10,13 +10,13 @@ import SwiftUI
 
 public extension View {
     @MainActor
-    func showUI<C: StoreUIContainer>(_ keyPath: KeyPath<Self, C?>) -> Binding<Bool> {
+    func showUI<C: ViewModelUIContainer>(_ keyPath: KeyPath<Self, C?>) -> Binding<Bool> {
         .init(
             get: {
-                guard let storeUI = self[keyPath: keyPath] else {
+                guard let viewModelUI = self[keyPath: keyPath] else {
                     return false
                 }
-                return !storeUI.store.isCancelled
+                return !viewModelUI.viewModel.isCancelled
             },
             set: { show in
                 if !show {
@@ -46,7 +46,7 @@ public extension View {
     /// }
     ///```
     @MainActor
-    func sheet<C: StoreUIContainer, V1: View, V2: View>(
+    func sheet<C: ViewModelUIContainer, V1: View, V2: View>(
         _ view: V1,
         _ keyPath: KeyPath<V1, C?>,
         content: @escaping (C) -> V2
@@ -106,13 +106,13 @@ public extension View {
     }
 
     @MainActor
-    func fullScreenOrWindow<V1: View, C: StoreUIContainer, V2: View>(
+    func fullScreenOrWindow<V1: View, C: ViewModelUIContainer, V2: View>(
         contentView: V1,
         _ keyPath: KeyPath<V1, C?>,
         isModal: Bool = true,
         content: @escaping () -> V2
     ) -> some View {
-        fullScreenOrWindow(isPresented: contentView.showUI(keyPath), storeUI: contentView[keyPath: keyPath]) {
+        fullScreenOrWindow(isPresented: contentView.showUI(keyPath), viewModelUI: contentView[keyPath: keyPath]) {
             content()
         }
     }

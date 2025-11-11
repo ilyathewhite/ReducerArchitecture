@@ -9,8 +9,8 @@
 import UIKit
 
 class NavigationUIKitProxy: NavigationProxy {
-    static func hostingVC(_ storeUI: some StoreUIContainer) -> UIViewController {
-        HostingController(store: storeUI.store)
+    static func hostingVC<T: ViewModelUIContainer>(_ viewModelUI: T) -> UIViewController {
+        HostingController<T>(viewModel: viewModelUI.viewModel)
     }
 
     private var nc: UINavigationController
@@ -23,15 +23,15 @@ class NavigationUIKitProxy: NavigationProxy {
         nc.viewControllers.count - 1
     }
 
-    public func push<Nsp: StoreUINamespace>(_ storeUI: StoreUI<Nsp>) -> Int {
-        let vc = Self.hostingVC(storeUI)
+    public func push<Nsp: ViewModelUINamespace>(_ viewModelUI: ViewModelUI<Nsp>) -> Int {
+        let vc = Self.hostingVC(viewModelUI)
         nc.pushViewController(vc, animated: true)
         return nc.viewControllers.count - 1
     }
 
-    public func replaceTop<Nsp: StoreUINamespace>(with storeUI: StoreUI<Nsp>) -> Int {
+    public func replaceTop<Nsp: ViewModelUINamespace>(with viewModelUI: ViewModelUI<Nsp>) -> Int {
         guard !nc.viewControllers.isEmpty else { return -1 }
-        let vc = Self.hostingVC(storeUI)
+        let vc = Self.hostingVC(viewModelUI)
         nc.viewControllers[nc.viewControllers.count - 1] = vc
         return nc.viewControllers.count - 1
     }
@@ -43,3 +43,5 @@ class NavigationUIKitProxy: NavigationProxy {
 }
 
 #endif
+
+

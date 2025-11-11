@@ -11,25 +11,25 @@ import os
 import SwiftUI
 
 @MainActor
-enum StoreUIContainers {
-    private static var dict: [UUID: any StoreUIContainer] = [:]
+enum ViewModelUIContainers {
+    private static var dict: [UUID: any ViewModelUIContainer] = [:]
 
-    static func add(_ storeUI: any StoreUIContainer) {
-        guard dict[storeUI.id] == nil else { return }
-        dict[storeUI.id] = storeUI
+    static func add(_ viewModelUIUI: any ViewModelUIContainer) {
+        guard dict[viewModelUIUI.id] == nil else { return }
+        dict[viewModelUIUI.id] = viewModelUIUI
     }
 
     static func remove(id: UUID) {
         dict.removeValue(forKey: id)
     }
 
-    static func get<C: StoreUIContainer>(id: UUID) -> C? {
-        guard let anyStoreUI = dict[id] else { return nil }
-        guard let storeUI = anyStoreUI as? C else {
+    static func get<C: ViewModelUIContainer>(id: UUID) -> C? {
+        guard let anyViewModelUI = dict[id] else { return nil }
+        guard let viewModelUI = anyViewModelUI as? C else {
             assertionFailure()
             return nil
         }
-        return storeUI
+        return viewModelUI
     }
 }
 
@@ -50,14 +50,14 @@ public extension EnvironmentValues {
 
 #endif
 
-public struct FullScreenOrWindow<C: StoreUIContainer, V: View>: ViewModifier {
+public struct FullScreenOrWindow<C: ViewModelUIContainer, V: View>: ViewModifier {
 #if os(macOS)
     @Environment(\.openWindow) private var openWindow
     @State private var id: UUID?
 #endif
     
     let isPresented: Binding<Bool>
-    let storeUI: C?
+    let viewModelUI: C?
     let isModal: Bool
     let presentedContent: () -> V?
     
@@ -67,9 +67,9 @@ public struct FullScreenOrWindow<C: StoreUIContainer, V: View>: ViewModifier {
     }
 #endif
     
-    public init(isPresented: Binding<Bool>, storeUI: C?, isModal: Bool, content: @escaping () -> V?) {
+    public init(isPresented: Binding<Bool>, viewModelUI: C?, isModal: Bool, content: @escaping () -> V?) {
         self.isPresented = isPresented
-        self.storeUI = storeUI
+        self.viewModelUI = viewModelUI
         self.isModal = isModal
         self.presentedContent = content
     }
@@ -78,31 +78,31 @@ public struct FullScreenOrWindow<C: StoreUIContainer, V: View>: ViewModifier {
 #if os(iOS)
         content.fullScreenCover(isPresented: isPresented, content: presentedContent)
 #else
-        content.onChange(of: storeUI) { storeUI in
-            if let storeUI {
-                id = storeUI.id
-                StoreUIContainers.add(storeUI)
-                openWindow(id: C.Nsp.Store.storeDefaultKey, value: storeUI.id)
+        content.onChange(of: viewModelUI) { viewModelUI in
+            if let viewModelUI {
+                id = viewModelUI.id
+                ViewModelUIContainers.add(viewModelUI)
+                openWindow(id: C.Nsp.ViewModel.viewModelDefaultKey, value: viewModelUI.id)
             }
             else {
                 if let id {
-                    StoreUIContainers.remove(id: id)
+                    ViewModelUIContainers.remove(id: id)
                 }
             }
         }
         .overlay {
-            if isModal, id != nil, let storeUI, !storeUI.store.isCancelled {
+            if isModal, id != nil, let viewModelUI, !viewModelUI.viewModel.isCancelled {
                 Color.primary.opacity(0.1)
                     .contentShape(Rectangle())
                     .onTapGesture {
                         id = nil
-                        storeUI.cancel()
+                        viewModelUI.cancel()
                     }
             }
         }
         .onDisappear {
             id = nil
-            storeUI?.store.cancel()
+            viewModelUI?.viewModel.cancel()
         }
         .transformEnvironment(\.dismissModalWindow) { action in
             if let prevAction = action {
@@ -125,35 +125,35 @@ public struct FullScreenOrWindow<C: StoreUIContainer, V: View>: ViewModifier {
 }
 
 extension View {
-    public func fullScreenOrWindow<C: StoreUIContainer, V: View>(
+    public func fullScreenOrWindow<C: ViewModelUIContainer, V: View>(
         isPresented: Binding<Bool>,
-        storeUI: C?,
+        viewModelUI: C?,
         isModal: Bool = true, 
         content: @escaping () -> V?
     )
     -> some View {
-        self.modifier(FullScreenOrWindow(isPresented: isPresented, storeUI: storeUI, isModal: isModal, content: content))
+        self.modifier(FullScreenOrWindow(isPresented: isPresented, viewModelUI: viewModelUI, isModal: isModal, content: content))
     }
 }
 
-public struct WindowContentView<C: StoreUIContainer>: View {
-    let storeUI: C?
+public struct WindowContentView<C: ViewModelUIContainer>: View {
+    let viewModelUI: C?
     
     struct ContentView: View {
-        let storeUI: C
+        let viewModelUI: C
         @Environment(\.dismiss) private var dismiss
         
         @MainActor
-        public init(storeUI: C) {
-            self.storeUI = storeUI
+        public init(viewModelUI: C) {
+            self.viewModelUI = viewModelUI
         }
         
         var body: some View {
-            storeUI.makeView()
+            viewModelUI.makeView()
                 .onDisappear {
-                    storeUI.cancel()
+                    viewModelUI.cancel()
                 }
-                .onReceive(storeUI.store.isCancelledPublisher) { _ in
+                .onReceive(viewModelUI.viewModel.isCancelledPublisher) { _ in
                     dismiss()
                 }
         }
@@ -161,21 +161,23 @@ public struct WindowContentView<C: StoreUIContainer>: View {
     
     @MainActor
     public init(id: UUID?) {
-        self.storeUI = id.flatMap { StoreUIContainers.get(id: $0) }
+        self.viewModelUI = id.flatMap { ViewModelUIContainers.get(id: $0) }
     }
     
     public var body: some View {
-        if let storeUI {
-            ContentView(storeUI: storeUI)
+        if let viewModelUI {
+            ContentView(viewModelUI: viewModelUI)
         }
     }
 }
 
-extension StoreUINamespace {
+extension ViewModelUINamespace {
     @MainActor
-    public static func windowGroup() -> WindowGroup<PresentedWindowContent<UUID, WindowContentView<StoreUI<Nsp>>>> where Nsp: StoreUINamespace {
-        WindowGroup(id: Store.storeDefaultKey, for: UUID.self) { id in
-            WindowContentView<StoreUI<Nsp>>(id: id.wrappedValue)
+    public static func windowGroup()
+    -> WindowGroup<PresentedWindowContent<UUID, WindowContentView<ViewModelUI<Self>>>>
+    {
+        WindowGroup(id: ViewModel.viewModelDefaultKey, for: UUID.self) { id in
+            WindowContentView<ViewModelUI<Self>>(id: id.wrappedValue)
         }
     }
 }

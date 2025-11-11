@@ -9,8 +9,8 @@ import SwiftUI
 
 @MainActor
 public class NavigationPathContainer: ObservableObject, NavigationProxy {
-    var root: (any StoreUIContainer)?
-    public private(set) var stack: [any StoreUIContainer] = []
+    var root: (any ViewModelUIContainer)?
+    public private(set) var stack: [any ViewModelUIContainer] = []
     private var internalChange = false
 
     @Published public var path: NavigationPath = .init() {
@@ -29,19 +29,19 @@ public class NavigationPathContainer: ObservableObject, NavigationProxy {
         return path.count - 1
     }
 
-    public func push<Nsp: StoreUINamespace>(_ storeUI: StoreUI<Nsp>) -> Int {
+    public func push<Nsp: ViewModelUINamespace>(_ viewModelUI: ViewModelUI<Nsp>) -> Int {
         assert(path.count == stack.count)
         internalChange = true
         defer {
             internalChange = false
         }
-        stack.append(storeUI)
-        path.append(storeUI)
+        stack.append(viewModelUI)
+        path.append(viewModelUI)
         return currentIndex
 
     }
 
-    public func replaceTop<Nsp: StoreUINamespace>(with storeUI: StoreUI<Nsp>) -> Int {
+    public func replaceTop<Nsp: ViewModelUINamespace>(with viewModelUI: ViewModelUI<Nsp>) -> Int {
         assert(path.count == stack.count)
         internalChange = true
         defer {
@@ -52,7 +52,7 @@ public class NavigationPathContainer: ObservableObject, NavigationProxy {
         stack.removeLast()
         path.removeLast()
 
-        return push(storeUI)
+        return push(viewModelUI)
     }
 
     public func popTo(_ index: Int) {
@@ -69,7 +69,7 @@ public class NavigationPathContainer: ObservableObject, NavigationProxy {
 
         let k = path.count - 1 - index
         // cancel order should be in reverse of push order
-        var valuesToCancel: [any StoreUIContainer] = []
+        var valuesToCancel: [any ViewModelUIContainer] = []
         for _ in 0..<k {
             valuesToCancel.append(stack.removeLast())
         }

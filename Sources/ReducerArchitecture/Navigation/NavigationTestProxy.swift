@@ -5,61 +5,72 @@
 //  Created by Ilya Belenkiy on 11/3/25.
 //
 
+import Foundation
 import Combine
+import CombineEx
 
 class NavigationTestProxy: NavigationProxy {
-    enum Placeholder: StoreNamespace {
-        typealias PublishedValue = Void
-        typealias StoreEnvironment = Never
-        typealias MutatingAction = Void
-        typealias EffectAction = Never
-        struct StoreState {}
+    class PlaceholderViewModel: BasicViewModel {
+        var publishedValue: PassthroughSubject<Void, Cancel> = .init()
 
-        @MainActor
-        static func store() -> Store {
-            .init(.init(), reducer: reducer())
+        func publish(_ value: Void) {
+            _publish(value)
         }
+        
+        typealias PublishedValue = Void
+
+        var id: UUID = .init()
+        var name = ""
+        var isCancelled = false
+
+        func cancel() {
+            isCancelled = true
+            _cancel()
+        }
+
+        var hasRequest = false
+        var children: [String : any BasicViewModel] = [:]
     }
 
     @MainActor
-    struct StoreInfo {
+    struct ViewModelInfo {
         let timeIndex: Int
-        let store: any BasicViewModel
+        let viewModel: any BasicViewModel
 
-        static let placeholder = Self.init(timeIndex: -1, store: Placeholder.store())
+        static let placeholder = Self.init(timeIndex: -1, viewModel: PlaceholderViewModel())
     }
 
-    enum CurrentStoreError: Error {
+    enum CurrentViewModelError: Error {
         case typeMismatch
     }
 
-    public private(set) var stack: [any StoreUIContainer] = []
-    let currentStorePublisher: CurrentValueSubject<StoreInfo, Never> = .init(.placeholder)
+    public private(set) var stack: [any ViewModelUIContainer] = []
+    let currentViewModelPublisher: CurrentValueSubject<ViewModelInfo, Never> = .init(.placeholder)
 
-    /// Returns the store of a particular type for a given time index.
+    /// Returns the viewModel of a particular type for a given time index.
     ///
     /// Used only for testing.
     @MainActor
-    public func getStore<T: StoreNamespace>(_ type: T.Type, _ timeIndex: inout Int) async throws -> T.Store {
-        let value = await currentStorePublisher.values.first(where: { $0.timeIndex == timeIndex })
-        guard let store = value?.store as? T.Store else {
-            throw CurrentStoreError.typeMismatch
+    public func getViewModel<Nsp: ViewModelUINamespace>(_ type: Nsp.Type, _ timeIndex: inout Int) async throws -> Nsp.ViewModel {
+        let value = await currentViewModelPublisher.values.first(where: { $0.timeIndex == timeIndex })
+        guard let viewModel = value?.viewModel as? Nsp.ViewModel else {
+            throw CurrentViewModelError.typeMismatch
         }
         timeIndex += 1
-        return store
+        return viewModel
     }
 
-    /// Returns the store of a particular type for a given time index.
+    /// Returns the viewModel of a particular type for a given time index.
     ///
     /// Used only for testing.
     @MainActor
-    public func getStore<T: BasicViewModel>(_ type: T.Type, _ timeIndex: inout Int) async throws -> T {
-        let value = await currentStorePublisher.values.first(where: { $0.timeIndex == timeIndex })
-        guard let store = value?.store as? T else {
-            throw CurrentStoreError.typeMismatch
+    public func getViewModel<T: BasicViewModel>(_ type: T.Type, _ timeIndex: inout Int) async throws -> T {
+        let value = await currentViewModelPublisher.values.first(where: { $0.timeIndex == timeIndex })
+        guard let viewModel = value?.viewModel as? T else {
+            throw CurrentViewModelError.typeMismatch
         }
         timeIndex += 1
-        return store
+        return viewModel
     }
 
     @MainActor
@@ -68,34 +79,34 @@ class NavigationTestProxy: NavigationProxy {
         return pop()
     }
 
-    func updateCurrentStore() {
-        guard let store = stack.last?.anyStore else {
+    func updateCurrentViewModel() {
+        guard let viewModel = stack.last?.anyViewModel else {
             assertionFailure()
             return
         }
-        let timeIndex = currentStorePublisher.value.timeIndex + 1
-        currentStorePublisher.send(.init(timeIndex: timeIndex, store: store))
+        let timeIndex = currentViewModelPublisher.value.timeIndex + 1
+        currentViewModelPublisher.send(.init(timeIndex: timeIndex, viewModel: viewModel))
     }
 
     var currentIndex: Int {
         stack.count - 1
     }
 
-    public func push<Nsp: StoreUINamespace>(_ storeUI: StoreUI<Nsp>) -> Int {
-        stack.append(storeUI)
-        updateCurrentStore()
+    public func push<Nsp: ViewModelUINamespace>(_ viewModelUI: ViewModelUI<Nsp>) -> Int {
+        stack.append(viewModelUI)
+        updateCurrentViewModel()
         return stack.count - 1
     }
 
-    public func replaceTop<Nsp: StoreUINamespace>(with storeUI: StoreUI<Nsp>) -> Int {
+    public func replaceTop<Nsp: ViewModelUINamespace>(with viewModelUI: ViewModelUI<Nsp>) -> Int {
         guard let last = stack.last else {
             assertionFailure()
             return 0
         }
         last.cancel()
 
-        stack[stack.count - 1] = storeUI
-        updateCurrentStore()
+        stack[stack.count - 1] = viewModelUI
+        updateCurrentViewModel()
         return stack.count - 1
     }
 
@@ -108,14 +119,15 @@ class NavigationTestProxy: NavigationProxy {
         // cancel order should be in reverse of push order
         var valuesToCancel: [any BasicViewModel] = []
         for _ in 0..<k {
-            let store = stack.removeLast()
-            valuesToCancel.append(store.anyStore)
+            let viewModelUI = stack.removeLast()
+            valuesToCancel.append(viewModelUI.anyViewModel)
         }
 
         for value in valuesToCancel {
             value.cancel()
         }
 
-        updateCurrentStore()
+        updateCurrentViewModel()
     }
 }
+
