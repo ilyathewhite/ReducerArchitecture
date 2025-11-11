@@ -12,7 +12,11 @@ extension Done: StoreUINamespace {
     struct ContentView: StoreContentView {
         typealias Nsp = Done
         @ObservedObject var store: Store
-        
+
+        init(_ store: Store) {
+            self.store = store
+        }
+
         var body: some View {
             VStack(spacing: 50) {
                 Text(store.state.value)

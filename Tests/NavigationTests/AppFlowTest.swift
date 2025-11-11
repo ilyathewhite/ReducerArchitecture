@@ -26,7 +26,7 @@ final class AppFlowTest: XCTestCase {
         let navigationProxy: NavigationTestProxy = .init()
 
         let rootStore = StringPicker.store(title: "Pick flow")
-        _ = navigationProxy.push(StoreUI(rootStore))
+        _ = navigationProxy.push(StoreUI(store: rootStore))
 
         let flow = AppFlow(flow: "Pair", proxy: navigationProxy)
 
@@ -65,7 +65,7 @@ final class AppFlowTest: XCTestCase {
         let navigationProxy: NavigationTestProxy = .init()
 
         let rootStore = StringPicker.store(title: "Pick flow")
-        _ = navigationProxy.push(StoreUI(rootStore))
+        _ = navigationProxy.push(StoreUI(store: rootStore))
 
         let flow = AppFlow(flow: "Pair", proxy: navigationProxy)
 
@@ -115,7 +115,7 @@ final class AppFlowTest: XCTestCase {
         let navigationProxy: NavigationTestProxy = .init()
 
         let rootStore = StringPicker.store(title: "Pick flow")
-        _ = navigationProxy.push(StoreUI(rootStore))
+        _ = navigationProxy.push(StoreUI(store: rootStore))
 
         let flow = AppFlow(flow: "Pair", proxy: navigationProxy)
 
@@ -143,7 +143,7 @@ final class AppFlowTest: XCTestCase {
         let navigationProxy: NavigationTestProxy = .init()
 
         let rootStore = StringPicker.store(title: "Pick flow")
-        _ = navigationProxy.push(StoreUI(rootStore))
+        _ = navigationProxy.push(StoreUI(store: rootStore))
 
         let flow = AppFlow(flow: "Concatenate", proxy: navigationProxy)
 
@@ -196,7 +196,7 @@ final class AppFlowTest: XCTestCase {
         let navigationProxy: NavigationTestProxy = .init()
 
         let rootStore = StringPicker.store(title: "Pick flow")
-        _ = navigationProxy.push(StoreUI(rootStore))
+        _ = navigationProxy.push(StoreUI(store: rootStore))
 
         let flow = AppFlow(flow: "Concatenate", proxy: navigationProxy)
 

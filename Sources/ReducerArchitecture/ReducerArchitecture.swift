@@ -7,6 +7,9 @@
 //
 
 import FoundationEx
+#if canImport(AsyncNavigation)
+@_exported import AsyncNavigation
+#endif
 #if canImport(SwiftUI)
 import SwiftUI
 #else

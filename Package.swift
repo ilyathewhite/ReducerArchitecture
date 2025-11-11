@@ -14,12 +14,13 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/ilyathewhite/CombineEx.git", .upToNextMinor(from: "1.0.5"))
+        .package(url: "https://github.com/ilyathewhite/CombineEx.git", .upToNextMinor(from: "1.0.5")),
+        .package(url: "https://github.com/ilyathewhite/AsyncNavigation", .upToNextMinor(from: "1.0.2"))
     ],
     targets: [
         .target(
             name: "ReducerArchitecture",
-            dependencies: ["CombineEx"],
+            dependencies: ["CombineEx", "AsyncNavigation"],
             swiftSettings: [
 //                .unsafeFlags([
 //                    "-Xfrontend",

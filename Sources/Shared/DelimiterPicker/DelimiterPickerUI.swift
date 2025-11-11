@@ -11,7 +11,11 @@ extension DelimiterPicker: StoreUINamespace {
     struct ContentView: StoreContentView {
         typealias Nsp = DelimiterPicker
         @ObservedObject var store: Store
-        
+
+        init(_ store: Store) {
+            self.store = store
+        }
+
         func button(value: Nsp.Delimiter) -> some View {
             Button(action: { store.send(.mutating(.updateValue(value))) }) {
                 let opacity = (value == store.state.value) ? 1 : 0.2
