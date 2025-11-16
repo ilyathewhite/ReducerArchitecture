@@ -23,7 +23,7 @@ final class AppFlowTest: XCTestCase {
     }
     
     func testPairFlow() async throws {
-        let navigationProxy: NavigationTestProxy = .init()
+        let navigationProxy: TestNavigationProxy = .init()
 
         let rootStore = StringPicker.store(title: "Pick flow")
         _ = navigationProxy.push(StoreUI(store: rootStore))
@@ -62,7 +62,7 @@ final class AppFlowTest: XCTestCase {
     }
     
     func testPairFlow2() async throws {
-        let navigationProxy: NavigationTestProxy = .init()
+        let navigationProxy: TestNavigationProxy = .init()
 
         let rootStore = StringPicker.store(title: "Pick flow")
         _ = navigationProxy.push(StoreUI(store: rootStore))
@@ -112,7 +112,7 @@ final class AppFlowTest: XCTestCase {
     }
     
     func testPairFlow3() async throws {
-        let navigationProxy: NavigationTestProxy = .init()
+        let navigationProxy: TestNavigationProxy = .init()
 
         let rootStore = StringPicker.store(title: "Pick flow")
         _ = navigationProxy.push(StoreUI(store: rootStore))
@@ -140,7 +140,7 @@ final class AppFlowTest: XCTestCase {
     }
     
     func testConcatenateFlow() async throws {
-        let navigationProxy: NavigationTestProxy = .init()
+        let navigationProxy: TestNavigationProxy = .init()
 
         let rootStore = StringPicker.store(title: "Pick flow")
         _ = navigationProxy.push(StoreUI(store: rootStore))
@@ -193,7 +193,7 @@ final class AppFlowTest: XCTestCase {
     }
     
     func testConcatenateFlow2() async throws {
-        let navigationProxy: NavigationTestProxy = .init()
+        let navigationProxy: TestNavigationProxy = .init()
 
         let rootStore = StringPicker.store(title: "Pick flow")
         _ = navigationProxy.push(StoreUI(store: rootStore))
