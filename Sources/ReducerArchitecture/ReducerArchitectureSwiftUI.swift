@@ -51,6 +51,7 @@ public protocol StoreContentView: ViewModelContentView where ViewModel == Store 
 
 public protocol StoreUINamespace: StoreNamespace, ViewModelUINamespace
 where ContentView: StoreContentView, ContentView.Nsp == Self, ViewModel == Store {
+    @MainActor
     static func updateNavigationCount(_ store: Store) -> Void
 }
 
