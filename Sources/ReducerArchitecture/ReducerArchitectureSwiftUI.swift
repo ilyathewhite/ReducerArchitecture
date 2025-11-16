@@ -43,10 +43,9 @@ public extension StateStore {
 }
 
 @MainActor
-public protocol StoreContentView: ViewModelContentView {
+public protocol StoreContentView: ViewModelContentView where ViewModel == Store {
     associatedtype Nsp: StoreNamespace
-    typealias Store = Nsp.Store
-    typealias ViewModel = Store
+    typealias Store = Nsp.Store    
     var store: Store { get }
 }
 

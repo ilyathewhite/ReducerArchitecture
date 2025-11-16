@@ -42,6 +42,7 @@
 		09B2D67229FDA005002DF6D3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		09B2D67529FDA005002DF6D3 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		09B2D67A29FDA142002DF6D3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		09D576EE2ECA36620082B7C3 /* AsyncNavigation */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = AsyncNavigation; path = /Users/ilya/Development/Personal/Packages/AsyncNavigation; sourceTree = "<absolute>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -59,6 +60,7 @@
 		0901B7D829FE2535001B7776 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
+				09D576EE2ECA36620082B7C3 /* AsyncNavigation */,
 				0901B7D929FE2535001B7776 /* ReducerArchitecture */,
 			);
 			name = Packages;

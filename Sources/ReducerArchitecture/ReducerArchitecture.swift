@@ -47,7 +47,7 @@ extension StoreNamespace {
 public struct StoreLifecycleLog {
     public var enabled = false
     public var debug = false
-    public private (set) var lastEvent: [UUID: (name: String, event: String)] = [:]
+    public private(set) var lastEvent: [UUID: (name: String, event: String)] = [:]
     
     mutating func addEvent(id: UUID, name: String, event: String) {
         guard !exclude(name) else { return }
@@ -174,9 +174,9 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             self.effect = effect
         }
     }
-    
+
     nonisolated public let id = UUID()
-    public var name: String
+    nonisolated(unsafe) public var name: String
     private var nestedLevel = 0
     
     public var environment: Environment?
