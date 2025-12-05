@@ -146,6 +146,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         case action(Action)
         case actions([Action])
         case asyncAction(() async -> Action)
+        case asyncActionLatest(key: String, () async -> Action)
         case asyncActions(() async -> [Action])
         case asyncActionSequence(() -> AsyncStream<Action>)
         case publisher(AnyPublisher<Action, Never>)
@@ -252,7 +253,16 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 guard !isCancelled else { return }
                 send(.code(action))
             }
-            
+
+        case .asyncActionLatest(key: let key, let f):
+            taskManager.addTask(cancellingPreviousWithKey: key) { [weak self] in
+                let action = await f()
+                guard !Task.isCancelled else { return }
+                guard let self else { return }
+                guard !isCancelled else { return }
+                send(.code(action))
+            }
+
         case .asyncActions(let f):
             taskManager.addTask { [weak self] in
                 let actions = await f()
