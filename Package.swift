@@ -16,7 +16,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/ilyathewhite/FoundationEx.git", .upToNextMinor(from: "1.0.10")),
         .package(url: "https://github.com/ilyathewhite/CombineEx.git", .upToNextMinor(from: "1.0.5")),
-        .package(url: "https://github.com/ilyathewhite/AsyncNavigation", .upToNextMinor(from: "1.0.9"))
+        .package(url: "https://github.com/ilyathewhite/AsyncNavigation", .upToNextMinor(from: "1.0.10"))
     ],
     targets: [
         .target(
