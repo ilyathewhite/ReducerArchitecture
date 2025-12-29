@@ -148,7 +148,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         case asyncAction(() async -> Action)
         case asyncActionLatest(key: String, () async -> Action)
         case asyncActions(() async -> [Action])
-        case asyncActionSequence(() -> AsyncStream<Action>)
+        case asyncActionSequence((_ callback: (Action) -> Void) async -> Void)
         case publisher(AnyPublisher<Action, Never>)
         case none // cannot use Effect? in Reducer because it breaks the compiler
         
@@ -275,16 +275,24 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             }
             
         case .asyncActionSequence(let f):
-            let actions = f()
+            let stream = AsyncStream<Action> { continuation in
+                taskManager.addTask {
+                    await f {
+                        guard !Task.isCancelled else { return }
+                        continuation.yield($0)
+                    }
+                    continuation.finish()
+                }
+            }
             taskManager.addTask { [weak self] in
-                for await action in actions {
+                for await action in stream {
                     guard !Task.isCancelled else { return }
                     guard let self else { return }
                     guard !isCancelled else { return }
                     send(.code(action))
                 }
             }
-            
+
         case .publisher(let publisher):
             taskManager.addTask { [weak self] in
                 for await action in publisher.values {
