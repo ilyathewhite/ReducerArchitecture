@@ -24,6 +24,15 @@ import Combine
 import CombineEx
 import os
 
+private func apply<T>(_ animation: Animation? = nil, _ body: () -> T) -> T {
+    if let animation {
+        return withAnimation(animation, body)
+    }
+    else {
+        return body()
+    }
+}
+
 public protocol StoreNamespace {
     associatedtype StoreEnvironment
     associatedtype StoreState
@@ -143,13 +152,13 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     }
     
     public enum Effect {
-        case action(Action)
-        case actions([Action])
-        case asyncAction(() async -> Action)
-        case asyncActionLatest(key: String, () async -> Action)
-        case asyncActions(() async -> [Action])
-        case asyncActionSequence((_ callback: (Action) -> Void) async -> Void)
-        case publisher(AnyPublisher<Action, Never>)
+        case action(Action, Animation? = nil)
+        case actions([Action], Animation? = nil)
+        case asyncAction(Animation? = nil, () async -> Action)
+        case asyncActionLatest(key: String, Animation? = nil, () async -> Action)
+        case asyncActions(Animation? = nil, () async -> [Action])
+        case asyncActionSequence((_ callback: (Action, Animation?) -> Void) async -> Void)
+        case publisher(AnyPublisher<Action, Never>, Animation? = nil)
         case none // cannot use Effect? in Reducer because it breaks the compiler
         
         init(_ e: SyncEffect) {
@@ -237,69 +246,69 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     
     public func addEffect(_ effect: Effect) {
         switch effect {
-        case .action(let action):
-            send(.code(action))
-            
-        case .actions(let actions):
+        case let .action(action, anim):
+            send(.code(action), anim)
+
+        case let .actions(actions, anim):
             for action in actions {
-                send(.code(action))
+                send(.code(action), anim)
             }
             
-        case .asyncAction(let f):
+        case let .asyncAction(anim, f):
             taskManager.addTask { [weak self] in
                 let action = await f()
                 guard !Task.isCancelled else { return }
                 guard let self else { return }
                 guard !isCancelled else { return }
-                send(.code(action))
+                send(.code(action), anim)
             }
 
-        case .asyncActionLatest(key: let key, let f):
+        case let .asyncActionLatest(key, anim, f):
             taskManager.addTask(cancellingPreviousWithKey: key) { [weak self] in
                 let action = await f()
                 guard !Task.isCancelled else { return }
                 guard let self else { return }
                 guard !isCancelled else { return }
-                send(.code(action))
+                send(.code(action), anim)
             }
 
-        case .asyncActions(let f):
+        case .asyncActions(let anim, let f):
             taskManager.addTask { [weak self] in
                 let actions = await f()
                 guard let self else { return }
                 for action in actions {
                     guard !Task.isCancelled else { return }
                     guard !isCancelled else { return }
-                    send(.code(action))
+                    send(.code(action), anim)
                 }
             }
             
         case .asyncActionSequence(let f):
-            let stream = AsyncStream<Action> { continuation in
+            let stream = AsyncStream<(Action, Animation?)> { continuation in
                 taskManager.addTask {
-                    await f {
+                    await f { action, anim in
                         guard !Task.isCancelled else { return }
-                        continuation.yield($0)
+                        continuation.yield((action, anim))
                     }
                     continuation.finish()
                 }
             }
             taskManager.addTask { [weak self] in
-                for await action in stream {
+                for await (action, anim) in stream {
                     guard !Task.isCancelled else { return }
                     guard let self else { return }
                     guard !isCancelled else { return }
-                    send(.code(action))
+                    send(.code(action), anim)
                 }
             }
 
-        case .publisher(let publisher):
+        case let .publisher(publisher, anim):
             taskManager.addTask { [weak self] in
                 for await action in publisher.values {
                     guard !Task.isCancelled else { return }
                     guard let self else { return }
                     guard !isCancelled else { return }
-                    send(.code(action))
+                    send(.code(action), anim)
                 }
             }
             
@@ -308,127 +317,129 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         }
     }
     
-    public func send(_ action: Action) {
-        send(.user(action))
+    public func send(_ action: Action, _ anim: Animation? = nil) {
+        send(.user(action), anim)
     }
     
-    private func send(_ storeAction: StoreAction) {
-        guard !isCancelled else {
-            switch storeAction.action {
-            case .cancel:
-                return
-            default:
-                logger.warning("\nReceived action to a store that is already cancelled.")
-                return
+    private func send(_ storeAction: StoreAction, _ anim: Animation?) {
+        apply(anim) {
+            guard !isCancelled else {
+                switch storeAction.action {
+                case .cancel:
+                    return
+                default:
+                    logger.warning("\nReceived action to a store that is already cancelled.")
+                    return
+                }
             }
-        }
-        if let logUserActions = logConfig.logUserActions {
-            let actionName: String?
-            let actionDetails: String?
-            switch storeAction {
-            case .user(let action), 
-                 .code(let action) where action.isPublish:
-                actionDetails = codeString(action)
-                switch action {
-                case .mutating(let mutatingAction, _, _):
-                    actionName = caseName(mutatingAction)
-                case .effect(let effectAction):
-                    actionName = caseName(effectAction)
-                case .cancel, .publish:
-                    actionName = caseName(action)
-                case .none:
+            if let logUserActions = logConfig.logUserActions {
+                let actionName: String?
+                let actionDetails: String?
+                switch storeAction {
+                case .user(let action),
+                        .code(let action) where action.isPublish:
+                    actionDetails = codeString(action)
+                    switch action {
+                    case .mutating(let mutatingAction, _, _):
+                        actionName = caseName(mutatingAction)
+                    case .effect(let effectAction):
+                        actionName = caseName(effectAction)
+                    case .cancel, .publish:
+                        actionName = caseName(action)
+                    case .none:
+                        actionName = nil
+                    }
+                default:
                     actionName = nil
+                    actionDetails = nil
                 }
-            default:
-                actionName = nil
-                actionDetails = nil
+                if let actionName {
+                    logUserActions(actionName, actionDetails)
+                }
             }
-            if let actionName {
-                logUserActions(actionName, actionDetails)
+
+            var reducerInput = ""
+            if logConfig.logActions {
+                reducerInput.append("\n->\n\(codeString(storeAction))")
             }
-        }
-        
-        var reducerInput = ""
-        if logConfig.logActions {
-            reducerInput.append("\n->\n\(codeString(storeAction))")
-        }
-        if logConfig.logState {
-            reducerInput.append("\n->\n\(codeString(state))")
-        }
-        if logConfig.logActions || logConfig.logState {
-            logger.debug("\(reducerInput)")
-        }
-        
-        let effect: Effect?
-        let syncEffect: SyncEffect?
-        switch storeAction.action {
-        case .mutating(let mutatingAction, let animate, let animation):
-            if animate {
-                syncEffect = withAnimation(animation ?? .default) { reducer.run(&state, mutatingAction) }
-            }
-            else {
-                syncEffect = reducer.run(&state, mutatingAction)
-            }
-            effect = syncEffect.map { .init($0) }
-            
             if logConfig.logState {
-                var reducerStateChange = "\n<-"
-                reducerStateChange.append("\n\(codeString(state))")
-                logger.debug("\(reducerStateChange)")
+                reducerInput.append("\n->\n\(codeString(state))")
             }
-            
-        case .effect(let effectAction):
-            guard let env = environment else {
-                assertionFailure()
-                return
+            if logConfig.logActions || logConfig.logState {
+                logger.debug("\(reducerInput)")
             }
-            
-            // When executing an effect, the environment may send more messages to the store while
-            // inside this call
-            nestedLevel += 1
-            syncEffect = nil
-            effect = reducer.effect(env, state, effectAction)
-            nestedLevel -= 1
-            
-        case .publish(let value):
-            _publish(value)
-            syncEffect = nil
-            effect = nil
-            
-        case .cancel:
-            _cancel()
-            isCancelled = true
-            taskManager.cancelAllTasks()
-            syncEffect = nil
-            effect = nil
-            environment = nil
-            for child in children.values {
-                child.cancel()
-            }
-            // don't remove child stores in case a child store view is rendered
-            // after the child store is cancelled
 
-            if storeLifecycleLog.enabled {
-                let name = Self.storeDefaultKey
-                if storeLifecycleLog.debug {
-                    logger.debug("Cancelled store \(name)\nid: \(self.id)")
+            let effect: Effect?
+            let syncEffect: SyncEffect?
+            switch storeAction.action {
+            case .mutating(let mutatingAction, let animate, let animation):
+                if animate {
+                    syncEffect = withAnimation(animation ?? .default) { reducer.run(&state, mutatingAction) }
                 }
-                storeLifecycleLog.addEvent(id: id, name: name, event: "Cancelled")
+                else {
+                    syncEffect = reducer.run(&state, mutatingAction)
+                }
+                effect = syncEffect.map { .init($0) }
+
+                if logConfig.logState {
+                    var reducerStateChange = "\n<-"
+                    reducerStateChange.append("\n\(codeString(state))")
+                    logger.debug("\(reducerStateChange)")
+                }
+
+            case .effect(let effectAction):
+                guard let env = environment else {
+                    assertionFailure()
+                    return
+                }
+
+                // When executing an effect, the environment may send more messages to the store while
+                // inside this call
+                nestedLevel += 1
+                syncEffect = nil
+                effect = reducer.effect(env, state, effectAction)
+                nestedLevel -= 1
+
+            case .publish(let value):
+                _publish(value)
+                syncEffect = nil
+                effect = nil
+
+            case .cancel:
+                _cancel()
+                isCancelled = true
+                taskManager.cancelAllTasks()
+                syncEffect = nil
+                effect = nil
+                environment = nil
+                for child in children.values {
+                    child.cancel()
+                }
+                // don't remove child stores in case a child store view is rendered
+                // after the child store is cancelled
+
+                if storeLifecycleLog.enabled {
+                    let name = Self.storeDefaultKey
+                    if storeLifecycleLog.debug {
+                        logger.debug("Cancelled store \(name)\nid: \(self.id)")
+                    }
+                    storeLifecycleLog.addEvent(id: id, name: name, event: "Cancelled")
+                }
+
+            case .none:
+                syncEffect = nil
+                effect = nil
             }
 
-        case .none:
-            syncEffect = nil
-            effect = nil
-        }
-        
-        if logConfig.logActions {
-            var reducerOutput = "\n<-"
-            reducerOutput.append("\n\(codeString(effect))")
-            logger.debug("\(reducerOutput)")
-        }
-        
-        if let e = effect {
-            addEffect(e)
+            if logConfig.logActions {
+                var reducerOutput = "\n<-"
+                reducerOutput.append("\n\(codeString(effect))")
+                logger.debug("\(reducerOutput)")
+            }
+
+            if let e = effect {
+                addEffect(e)
+            }
         }
     }
 
@@ -480,6 +491,7 @@ public extension StateStore {
         to otherStore: OtherNsp.Store,
         on keyPath: KeyPath<OtherNsp.StoreState, OtherValue>,
         with action: @escaping (OtherValue) -> Action?,
+        animation: Animation? = nil,
         compare: @escaping (OtherValue, OtherValue) -> Bool
     ) {
         addEffect(
@@ -487,7 +499,8 @@ public extension StateStore {
                 otherStore
                     .distinctValues(on: keyPath, compare: compare)
                     .compactMap { action($0) }
-                    .eraseToAnyPublisher()
+                    .eraseToAnyPublisher(),
+                animation
             )
         )
     }
@@ -502,15 +515,15 @@ public extension StateStore {
     
     func bindPublishedValue<OtherNsp: StoreNamespace>(
         of otherStore: OtherNsp.Store,
-        with action: @escaping (OtherNsp.PublishedValue
-    )
-    -> Action)
-    {
+        with action: @escaping (OtherNsp.PublishedValue) -> Action,
+        animation: Animation? = nil
+    ) {
         addEffect(
             .publisher(
                 otherStore.value.map { action($0) }
                     .catch { _ in Just(.cancel) }
-                    .eraseToAnyPublisher()
+                    .eraseToAnyPublisher(),
+                animation
             )
         )
     }
