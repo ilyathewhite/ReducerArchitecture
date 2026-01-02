@@ -199,6 +199,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     internal var logger: Logger {
         logConfig.logger
     }
+    private var codeStringSnapshots: [ReducerSnapshotData] = []
 
     @Published public private(set) var state: State
     public private(set) var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
@@ -369,6 +370,11 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 logger.debug("\(reducerInput)")
             }
 
+            if logConfig.saveSnapshots {
+                let snapshot: Snapshot = Snapshot.Input(date: .now, action: storeAction, state: state, nestedLevel: nestedLevel).snapshot
+                codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
+            }
+
             let effect: Effect?
             let syncEffect: SyncEffect?
             switch storeAction.action {
@@ -385,6 +391,11 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                     var reducerStateChange = "\n<-"
                     reducerStateChange.append("\n\(codeString(state))")
                     logger.debug("\(reducerStateChange)")
+                }
+
+                if logConfig.saveSnapshots {
+                    let snapshot = Snapshot.StateChange(date: .now, state: state, nestedLevel: nestedLevel).snapshot
+                    codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
                 }
 
             case .effect(let effectAction):
@@ -435,6 +446,18 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 var reducerOutput = "\n<-"
                 reducerOutput.append("\n\(codeString(effect))")
                 logger.debug("\(reducerOutput)")
+            }
+
+            if logConfig.saveSnapshots {
+                let snapshot = Snapshot.Output(
+                    date: Date.now,
+                    effect: effect,
+                    syncEffect: syncEffect,
+                    state: state,
+                    nestedLevel: nestedLevel
+                )
+                .snapshot
+                codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
             }
 
             if let e = effect {
@@ -533,6 +556,9 @@ extension StateStore {
     public struct LogConfig {
         public var logState = false
         public var logActions = false
+        public var saveSnapshots = false
+        public var snapshotsFilename: String? = nil
+
         internal var logger: Logger
         public var logUserActions: ((_ actionName: String, _ actionDetails: String?) -> Void)?
 
@@ -546,6 +572,111 @@ extension StateStore {
             self.logActions = logActions
             self.logger = logger
             self.logUserActions = logUserActions
+        }
+    }
+
+    public enum Snapshot {
+        public struct Input {
+            let date: Date
+            let action: StoreAction
+            let state: State
+            let nestedLevel: Int
+
+            var snapshot: Snapshot {
+                .input(self)
+            }
+
+            var isFromUser: Bool {
+                action.isFromUser
+            }
+        }
+
+        public struct StateChange {
+            let date: Date
+            let state: State
+            let nestedLevel: Int
+
+            var snapshot: Snapshot {
+                .stateChange(self)
+            }
+        }
+
+        public struct Output {
+            let date: Date
+            let effect: Effect?
+            let syncEffect: SyncEffect?
+            let state: State
+            let nestedLevel: Int
+
+            var snapshot: Snapshot {
+                .output(self)
+            }
+        }
+
+        case input(Input)
+        case stateChange(StateChange)
+        case output(Output)
+
+        public func logData(errorLogger logger: Logger) -> ReducerSnapshotData {
+            switch self {
+            case .input(let input):
+                return ReducerSnapshotData.Input(
+                    date: input.date,
+                    action: codeString(input.action),
+                    state: propertyCodeStrings(input.state),
+                    nestedLevel: input.nestedLevel
+                )
+                .snapshotData
+
+            case .stateChange(let stateChange):
+                return ReducerSnapshotData.StateChange(
+                    date: stateChange.date,
+                    state: propertyCodeStrings(stateChange.state),
+                    nestedLevel: stateChange.nestedLevel
+                )
+                .snapshotData
+
+            case .output(let output):
+                return ReducerSnapshotData.Output(
+                    date: output.date,
+                    effect: codeString(output.effect),
+                    state: propertyCodeStrings(output.state),
+                    nestedLevel: output.nestedLevel
+                )
+                .snapshotData
+            }
+        }
+
+        public var isFromUser: Bool {
+            switch self {
+            case .input(let input):
+                return input.isFromUser
+            default:
+                return false
+            }
+        }
+    }
+
+    private func clearSnapshots() {
+        codeStringSnapshots = []
+    }
+
+    @MainActor
+    public func saveSnapshotsIfNeeded() {
+        guard logConfig.saveSnapshots else { return }
+        let title = logConfig.snapshotsFilename ?? Self.viewModelDefaultKey
+        let snapshotCollection = ReducerSnapshotCollection(title: title, snapshots: codeStringSnapshots)
+        do {
+            if let path = try snapshotCollection.save() {
+                logger.info("Saved reducer snapshots to \n\(path)")
+                clearSnapshots()
+            }
+            else {
+                logger.error("Failed to save snapshots.")
+            }
+        }
+        catch {
+            logger.error(message: "Failed to save snapshots.", error)
         }
     }
 }
