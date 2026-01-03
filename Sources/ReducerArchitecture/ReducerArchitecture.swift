@@ -152,12 +152,31 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     }
     
     public enum Effect {
+        /// Swift doesn't allow default arguments in closures.
+        /// This type provides a workaround, making it possible to call the wrapped callback
+        /// with only the action, ommiting animation if it's nil.
+        public struct AsyncActionCallback {
+            private let callback: (Action, Animation?) -> Void
+
+            init(_ callback: @escaping (Action, Animation?) -> Void) {
+                self.callback = callback
+            }
+
+            public func callAsFunction(_ action: Action) {
+                callback(action, nil)
+            }
+
+            public func callAsFunction(_ action: Action, _ animation: Animation?) {
+                callback(action, animation)
+            }
+        }
+
         case action(Action, Animation? = nil)
         case actions([Action], Animation? = nil)
         case asyncAction(Animation? = nil, () async -> Action)
         case asyncActionLatest(key: String, Animation? = nil, () async -> Action)
         case asyncActions(Animation? = nil, () async -> [Action])
-        case asyncActionSequence((_ callback: (Action, Animation?) -> Void) async -> Void)
+        case asyncActionSequence((_ callback: AsyncActionCallback) async -> Void)
         case publisher(AnyPublisher<Action, Never>, Animation? = nil)
         case none // cannot use Effect? in Reducer because it breaks the compiler
         
@@ -208,7 +227,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 
     nonisolated
     public static var storeDefaultKey: String {
-        viewModelDefaultKey
+        String(describing: Nsp.self)
     }
 
     public init(_ initialValue: State, reducer: Reducer, env: Environment?) {
@@ -286,11 +305,13 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             
         case .asyncActionSequence(let f):
             let stream = AsyncStream<(Action, Animation?)> { continuation in
+                let callback = Effect.AsyncActionCallback { action, anim in
+                    guard !Task.isCancelled else { return }
+                    continuation.yield((action, anim))
+                }
+
                 taskManager.addTask {
-                    await f { action, anim in
-                        guard !Task.isCancelled else { return }
-                        continuation.yield((action, anim))
-                    }
+                    await f(callback)
                     continuation.finish()
                 }
             }
