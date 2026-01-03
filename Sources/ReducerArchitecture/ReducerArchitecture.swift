@@ -685,7 +685,7 @@ extension StateStore {
     @MainActor
     public func saveSnapshotsIfNeeded() {
         guard logConfig.saveSnapshots else { return }
-        let title = logConfig.snapshotsFilename ?? Self.viewModelDefaultKey
+        let title = logConfig.snapshotsFilename ?? name
         let snapshotCollection = ReducerSnapshotCollection(title: title, snapshots: codeStringSnapshots)
         do {
             if let path = try snapshotCollection.save() {
