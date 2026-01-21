@@ -339,11 +339,11 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         }
     }
     
-    public func send(_ action: Action, _ anim: Animation? = nil) {
-        send(.user(action), anim)
+    public func send(_ action: Action, _ anim: Animation? = nil, file: String = #fileID, line: Int = #line) {
+        send(.user(action), anim, file: file, line: line)
     }
     
-    private func send(_ storeAction: StoreAction, _ anim: Animation?) {
+    private func send(_ storeAction: StoreAction, _ anim: Animation?, file: String = #fileID, line: Int = #line) {
         apply(anim) {
             guard !isCancelled else {
                 switch storeAction.action {
@@ -381,13 +381,16 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             }
 
             var reducerInput = ""
+            if logConfig.logActionCallSite {
+                reducerInput.append("\nfile: \(file), line: \(line)")
+            }
             if logConfig.logActions {
                 reducerInput.append("\n->\n\(codeString(storeAction))")
             }
             if logConfig.logState {
                 reducerInput.append("\n->\n\(codeString(state))")
             }
-            if logConfig.logActions || logConfig.logState {
+            if logConfig.logEnabled {
                 logger.debug("\(reducerInput)")
             }
 
@@ -487,12 +490,12 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         }
     }
 
-    public func publish(_ value: PublishedValue) {
-        send(.publish(value))
+    public func publish(_ value: PublishedValue, file: String = #fileID, line: Int = #line) {
+        send(.publish(value), file: file, line: line)
     }
 
-    public func cancel() {
-        send(.cancel)
+    public func cancel(file: String = #fileID, line: Int = #line) {
+        send(.cancel, file: file, line: line)
     }
 }
 
@@ -577,8 +580,13 @@ extension StateStore {
     public struct LogConfig {
         public var logState = false
         public var logActions = false
+        public var logActionCallSite = false
         public var saveSnapshots = false
         public var snapshotsFilename: String? = nil
+
+        public var logEnabled: Bool {
+            logState || logActions || logActionCallSite
+        }
 
         internal var logger: Logger
         public var logUserActions: ((_ actionName: String, _ actionDetails: String?) -> Void)?

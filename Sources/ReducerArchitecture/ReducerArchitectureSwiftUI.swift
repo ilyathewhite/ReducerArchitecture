@@ -12,7 +12,8 @@ public extension StateStore {
     func binding<Value>(
         _ keyPath: KeyPath<State, Value>,
         _ action: @escaping (Value) -> MutatingAction,
-        animation: Animation? = nil
+        animation: Animation? = nil,
+        file: String = #fileID, line: Int = #line
     )
     ->
     Binding<Value> where Value: Equatable
@@ -25,7 +26,7 @@ public extension StateStore {
                         self.send(.mutating(action($0), animated: true, animation))
                     }
                     else {
-                        self.send(.mutating(action($0)))
+                        self.send(.mutating(action($0)), file: file, line: line)
                     }
                 }
             }
