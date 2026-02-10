@@ -104,17 +104,14 @@ extension StateStore {
 extension AppSettingsNsp {
     @MainActor
     public static func store() -> Store {
-        Store(.init(), reducer: reducer())
+        Store(.init(), env: nil)
     }
-    
-    @MainActor
-    public static func reducer() -> Reducer {
-        .init { state, action in
-            switch action {
-            case let .setValue(value, update):
-                update(&state, value)
-                return .none
-            }
+
+    public static func reduce(_ state: inout StoreState, _ action: MutatingAction) -> Store.SyncEffect {
+        switch action {
+        case let .setValue(value, update):
+            update(&state, value)
+            return .none
         }
     }
 }

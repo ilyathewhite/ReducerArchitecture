@@ -50,7 +50,7 @@ struct AppFlow {
                     await pickStrings(result: [], remainingCount: count) { strings in
                         let result = strings.joined(separator: delimiter.rawValue)
                         await finish(result: result).then { _, _ in
-                            proxy.popTo(rootIndex)
+                            proxy.pop(to: rootIndex)
                         }
                     }
                 }
@@ -60,14 +60,14 @@ struct AppFlow {
             await pickInt().then { intValue, _ in
                 await pickString(title: nil).then { stringValue, _ in
                     await finish(result: "\(intValue), \(stringValue)").then { _, _ in
-                        proxy.popTo(rootIndex)
+                        proxy.pop(to: rootIndex)
                     }
                 }
             }
             
         default:
             await finish(result: "Unknown Flow").then { _, _ in
-                proxy.popTo(rootIndex)
+                proxy.pop(to: rootIndex)
             }
         }
     }

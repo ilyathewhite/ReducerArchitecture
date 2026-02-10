@@ -24,17 +24,14 @@ enum IntPicker: StoreNamespace {
 extension IntPicker {
     @MainActor
     static func store() -> Store {
-        .init(.init(), reducer: reducer())
+        .init(.init(), env: nil)
     }
-    
-    @MainActor
-    static func reducer() -> Reducer {
-        .init { state, action in
-            switch action {
-            case .updateValue(let value):
-                state.value = value
-                return .none
-            }
+
+    static func reduce(_ state: inout StoreState, _ action: MutatingAction) -> Store.SyncEffect {
+        switch action {
+        case .updateValue(let value):
+            state.value = value
+            return .none
         }
     }
 }

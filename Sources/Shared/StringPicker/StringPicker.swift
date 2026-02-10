@@ -25,17 +25,14 @@ enum StringPicker: StoreNamespace {
 extension StringPicker {
     @MainActor
     static func store(title: String? = nil) -> Store {
-        .init(.init(title: title ?? "Pick a string", value: ""), reducer: reducer())
+        .init(.init(title: title ?? "Pick a string", value: ""), env: nil)
     }
-    
-    @MainActor
-    static func reducer() -> Reducer {
-        .init { state, action in
-            switch action {
-            case .updateValue(let value):
-                state.value = value
-                return .none
-            }
+
+    static func reduce(_ state: inout StoreState, _ action: MutatingAction) -> Store.SyncEffect {
+        switch action {
+        case .updateValue(let value):
+            state.value = value
+            return .none
         }
     }
 }

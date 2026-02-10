@@ -39,16 +39,32 @@ public protocol StoreNamespace {
     associatedtype MutatingAction
     associatedtype EffectAction
     associatedtype PublishedValue
+
+    @MainActor
+    static func reduce(_ state: inout StoreState, _ action: MutatingAction) -> StateStore<Self>.SyncEffect
+
+    @MainActor
+    static func runEffect(_ env: StoreEnvironment, _ state: StoreState, _ action: EffectAction) -> StateStore<Self>.Effect
 }
 
 extension StoreNamespace {
     public typealias Nsp = Self
     public typealias Store = StateStore<Self>
-    public typealias Reducer = Store.Reducer
-    
+}
+
+extension StoreNamespace
+where EffectAction == Never {
     @MainActor
-    public static func reducer() -> Reducer where MutatingAction == Void, EffectAction == Never {
-        .init { _, _ in .none }
+    public static func runEffect(_ env: StoreEnvironment, _ state: StoreState, _ action: EffectAction) -> StateStore<Self>.Effect {
+        fatalError("runEffect should never be called when EffectAction == Never")
+    }
+}
+
+extension StoreNamespace
+where MutatingAction == Void, EffectAction == Never {
+    @MainActor
+    public static func reduce(_ state: inout StoreState, _ action: MutatingAction) -> StateStore<Self>.SyncEffect {
+        .none
     }
 }
 
@@ -148,7 +164,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     public enum SyncEffect {
         case action(Action)
         case actions([Action])
-        case none // cannot use Effect? in Reducer because it breaks the compiler
+        case none // cannot use Effect? in reducer callbacks because it breaks the compiler
     }
     
     public enum Effect {
@@ -178,7 +194,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         case asyncActions(Animation? = nil, () async -> [Action])
         case asyncActionSequence((_ callback: AsyncActionCallback) async -> Void)
         case publisher(AnyPublisher<Action, Never>, Animation? = nil)
-        case none // cannot use Effect? in Reducer because it breaks the compiler
+        case none // cannot use Effect? in reducer callbacks because it breaks the compiler
         
         init(_ e: SyncEffect) {
             switch e {
@@ -192,24 +208,11 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         }
     }
     
-    public struct Reducer {
-        public typealias Value = Nsp.StoreState
-        
-        let run: (inout Value, MutatingAction) -> SyncEffect
-        let effect: (Environment, Value, EffectAction) -> Effect
-        
-        public init(run: @escaping (inout Value, MutatingAction) -> SyncEffect, effect: @escaping (Environment, Value, EffectAction) -> Effect) {
-            self.run = run
-            self.effect = effect
-        }
-    }
-
     nonisolated public let id = UUID()
     nonisolated(unsafe) public var name: String
     private var nestedLevel = 0
     
     public var environment: Environment?
-    internal let reducer: Reducer
     private let taskManager = TaskManager()
     
     public var children: [String: any BasicViewModel] = [:]
@@ -230,9 +233,8 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         String(describing: Nsp.self)
     }
 
-    public init(_ initialValue: State, reducer: Reducer, env: Environment?) {
+    public init(_ initialValue: State, env: Environment?) {
         self.name = Self.storeDefaultKey
-        self.reducer = reducer
         self.state = initialValue
         self.environment = env
 
@@ -253,15 +255,6 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             }
             storeLifecycleLog.removeEvents(id: id)
         }
-    }
-    
-    public convenience init(_ initialValue: State, reducer: Reducer)
-    where Environment == Never, EffectAction == Never {
-        self.init(initialValue, reducer: reducer, env: nil)
-    }
-    
-    public convenience init(_ initialValue: State, reducer: Reducer) where Environment == Void {
-        self.init(initialValue, reducer: reducer, env: ())
     }
     
     public func addEffect(_ effect: Effect) {
@@ -404,10 +397,10 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             switch storeAction.action {
             case .mutating(let mutatingAction, let animate, let animation):
                 if animate {
-                    syncEffect = withAnimation(animation ?? .default) { reducer.run(&state, mutatingAction) }
+                    syncEffect = withAnimation(animation ?? .default) { Nsp.reduce(&state, mutatingAction) }
                 }
                 else {
-                    syncEffect = reducer.run(&state, mutatingAction)
+                    syncEffect = Nsp.reduce(&state, mutatingAction)
                 }
                 effect = syncEffect.map { .init($0) }
 
@@ -432,7 +425,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 // inside this call
                 nestedLevel += 1
                 syncEffect = nil
-                effect = reducer.effect(env, state, effectAction)
+                effect = Nsp.runEffect(env, state, effectAction)
                 nestedLevel -= 1
 
             case .publish(let value):
@@ -496,13 +489,6 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 
     public func cancel(file: String = #fileID, line: Int = #line) {
         send(.cancel, file: file, line: line)
-    }
-}
-
-extension StateStore.Reducer where Nsp.EffectAction == Never {
-    @MainActor
-    public init(_ run: @escaping (inout Value, Nsp.MutatingAction) -> StateStore.SyncEffect) {
-        self = StateStore.Reducer(run: run, effect: { _, _, effectAction in .none })
     }
 }
 
@@ -709,4 +695,3 @@ extension StateStore {
         }
     }
 }
-

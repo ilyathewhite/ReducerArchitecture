@@ -28,26 +28,14 @@ enum <#StoreNsp#>: StoreNamespace {
 }
 
 extension <#StoreNsp#> {
-    @MainActor
-    static func reducer() -> Reducer {
-        .init { state, action in
-            switch action {
-            }
+    static func reduce(_ state: inout StoreState, _ action: MutatingAction) -> Store.SyncEffect {
+        switch action {
         }
     }
-    
-    @MainActor
-    static func reducer() -> Reducer {
-        .init(
-            run: { state, action in
-                switch action {
-                }
-            },
-            effect: { env, state, action in
-                switch action {
-                }
-            }
-        )
+
+    static func runEffect(_ env: StoreEnvironment, _ state: StoreState, _ action: EffectAction) -> Store.Effect {
+        switch action {
+        }
     }
 }
 */
