@@ -483,12 +483,16 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         }
     }
 
-    public func publish(_ value: PublishedValue, file: String = #fileID, line: Int = #line) {
-        send(.publish(value), file: file, line: line)
+    // Must keep this exact signature to conform to `BasicViewModel`.
+    // Adding `file/line` here would not satisfy the protocol requirement.
+    public func publish(_ value: PublishedValue) {
+        send(.publish(value))
     }
 
-    public func cancel(file: String = #fileID, line: Int = #line) {
-        send(.cancel, file: file, line: line)
+    // Must keep this exact signature to conform to `BasicViewModel`.
+    // Adding `file/line` here would not satisfy the protocol requirement.
+    public func cancel() {
+        send(.cancel)
     }
 }
 
