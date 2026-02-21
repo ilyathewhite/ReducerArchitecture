@@ -256,95 +256,131 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             storeLifecycleLog.removeEvents(id: id)
         }
     }
-    
-    public func addEffect(_ effect: Effect) {
+
+    @discardableResult
+    public func addEffect(_ effect: Effect) -> Task<Void, Never>? {
         switch effect {
         case let .action(action, anim):
-            send(.code(action), anim)
+            return send(.code(action), anim)
 
         case let .actions(actions, anim):
-            for action in actions {
+            let tasks = actions.compactMap { action in
                 send(.code(action), anim)
             }
-            
+            if tasks.isEmpty {
+                return nil
+            }
+            else {
+                return Task {
+                    for task in tasks {
+                        await task.value
+                    }
+                }
+            }
+
         case let .asyncAction(anim, f):
-            taskManager.addTask { [weak self] in
+            return taskManager.addTask { [weak self] in
                 let action = await f()
                 guard !Task.isCancelled else { return }
                 guard let self else { return }
                 guard !isCancelled else { return }
-                send(.code(action), anim)
+                if let task = send(.code(action), anim) {
+                    await task.value
+                }
             }
 
         case let .asyncActionLatest(key, anim, f):
-            taskManager.addTask(cancellingPreviousWithKey: key) { [weak self] in
+            return taskManager.addTask(cancellingPreviousWithKey: key) { [weak self] in
                 let action = await f()
                 guard !Task.isCancelled else { return }
                 guard let self else { return }
                 guard !isCancelled else { return }
-                send(.code(action), anim)
+                if let task = send(.code(action), anim) {
+                    await task.value
+                }
             }
 
         case .asyncActions(let anim, let f):
-            taskManager.addTask { [weak self] in
+            return taskManager.addTask { [weak self] in
                 let actions = await f()
-                guard let self else { return }
-                for action in actions {
-                    guard !Task.isCancelled else { return }
-                    guard !isCancelled else { return }
-                    send(.code(action), anim)
+                await withTaskGroup(of: Void.self) { group in
+                    for action in actions {
+                        guard !Task.isCancelled else { return }
+                        guard let self else { return }
+                        guard !self.isCancelled else { return }
+                        if let task = self.send(.code(action), anim) {
+                            group.addTask {
+                                await task.value
+                            }
+                        }
+                    }
                 }
             }
             
         case .asyncActionSequence(let f):
-            let stream = AsyncStream<(Action, Animation?)> { continuation in
+            let (stream, continuation) = AsyncStream<(Action, Animation?)>.makeStream()
+            let producer = taskManager.addTask {
                 let callback = Effect.AsyncActionCallback { action, anim in
                     guard !Task.isCancelled else { return }
                     continuation.yield((action, anim))
                 }
-
-                taskManager.addTask {
-                    await f(callback)
-                    continuation.finish()
+                await f(callback)
+                continuation.finish()
+            }
+            let consumer = taskManager.addTask { [weak self] in
+                await withTaskGroup(of: Void.self) { group in
+                    for await (action, anim) in stream {
+                        guard !Task.isCancelled else { return }
+                        guard let self else { return }
+                        guard !self.isCancelled else { return }
+                        if let task = self.send(.code(action), anim) {
+                            group.addTask {
+                                await task.value
+                            }
+                        }
+                    }
                 }
             }
-            taskManager.addTask { [weak self] in
-                for await (action, anim) in stream {
-                    guard !Task.isCancelled else { return }
-                    guard let self else { return }
-                    guard !isCancelled else { return }
-                    send(.code(action), anim)
-                }
+            return Task {
+                await producer.value
+                await consumer.value
             }
 
         case let .publisher(publisher, anim):
-            taskManager.addTask { [weak self] in
-                for await action in publisher.values {
-                    guard !Task.isCancelled else { return }
-                    guard let self else { return }
-                    guard !isCancelled else { return }
-                    send(.code(action), anim)
+            return taskManager.addTask { [weak self] in
+                await withTaskGroup(of: Void.self) { group in
+                    for await action in publisher.values {
+                        guard !Task.isCancelled else { return }
+                        guard let self else { return }
+                        guard !self.isCancelled else { return }
+                        if let task = self.send(.code(action), anim) {
+                            group.addTask {
+                                await task.value
+                            }
+                        }
+                    }
                 }
             }
             
         case .none:
-            break
+            return nil
         }
     }
-    
-    public func send(_ action: Action, _ anim: Animation? = nil, file: String = #fileID, line: Int = #line) {
+
+    @discardableResult
+    public func send(_ action: Action, _ anim: Animation? = nil, file: String = #fileID, line: Int = #line) -> Task<Void, Never>? {
         send(.user(action), anim, file: file, line: line)
     }
     
-    private func send(_ storeAction: StoreAction, _ anim: Animation?, file: String = #fileID, line: Int = #line) {
-        apply(anim) {
+    private func send(_ storeAction: StoreAction, _ anim: Animation?, file: String = #fileID, line: Int = #line) -> Task<Void, Never>? {
+        apply(anim) { () -> Task<Void, Never>? in
             guard !isCancelled else {
                 switch storeAction.action {
                 case .cancel:
-                    return
+                    return nil
                 default:
                     logger.warning("\nReceived action to a store that is already cancelled.")
-                    return
+                    return nil
                 }
             }
             if let logUserActions = logConfig.logUserActions {
@@ -418,7 +454,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             case .effect(let effectAction):
                 guard let env = environment else {
                     assertionFailure()
-                    return
+                    return nil
                 }
 
                 // When executing an effect, the environment may send more messages to the store while
@@ -478,7 +514,10 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             }
 
             if let e = effect {
-                addEffect(e)
+                return addEffect(e)
+            }
+            else {
+                return nil
             }
         }
     }
