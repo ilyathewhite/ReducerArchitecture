@@ -14,9 +14,9 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/ilyathewhite/FoundationEx.git", .upToNextMinor(from: "1.0.12")),
-        .package(url: "https://github.com/ilyathewhite/CombineEx.git", .upToNextMinor(from: "1.0.5")),
-        .package(url: "https://github.com/ilyathewhite/AsyncNavigation", .upToNextMinor(from: "1.0.11"))
+        .package(url: "https://github.com/ilyathewhite/FoundationEx.git", .upToNextMajor(from: "1.0.13")),
+        .package(url: "https://github.com/ilyathewhite/CombineEx.git", .upToNextMajor(from: "1.0.5")),
+        .package(url: "https://github.com/ilyathewhite/AsyncNavigation", .upToNextMajor(from: "1.0.12"))
     ],
     targets: [
         .target(
@@ -32,8 +32,9 @@ let package = Package(
             ]
         ),
         .target(
-            name: "Shared",
+            name: "TestSupport",
             dependencies: ["FoundationEx", "CombineEx", "ReducerArchitecture"],
+            path: "Tests/TestSupport",
             swiftSettings: [
 //                .unsafeFlags([
 //                    "-Xfrontend",
@@ -44,8 +45,10 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "NavigationTests",
-            dependencies: ["ReducerArchitecture", "Shared"]
+            name: "ReducerArchitectureTests",
+            dependencies: ["ReducerArchitecture", "TestSupport"],
+            path: "Tests",
+            exclude: ["TestApp", "TestSupport", ".DS_Store"]
         )
     ]
 )

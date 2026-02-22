@@ -257,6 +257,26 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         }
     }
 
+    private static func consumeActions<Element>(
+        from stream: AsyncStream<Element>,
+        storeProvider: @escaping () -> StateStore?,
+        mapToAction: (Element) -> (Action, Animation?)
+    ) async {
+        await withTaskGroup(of: Void.self) { group in
+            for await element in stream {
+                guard !Task.isCancelled else { return }
+                guard let store = storeProvider() else { return }
+                guard !store.isCancelled else { return }
+                let (action, anim) = mapToAction(element)
+                if let task = store.send(.code(action), anim) {
+                    group.addTask {
+                        await task.value
+                    }
+                }
+            }
+        }
+    }
+
     @discardableResult
     public func addEffect(_ effect: Effect) -> Task<Void, Never>? {
         switch effect {
@@ -283,7 +303,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 let action = await f()
                 guard !Task.isCancelled else { return }
                 guard let self else { return }
-                guard !isCancelled else { return }
+                guard !self.isCancelled else { return }
                 if let task = send(.code(action), anim) {
                     await task.value
                 }
@@ -294,7 +314,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 let action = await f()
                 guard !Task.isCancelled else { return }
                 guard let self else { return }
-                guard !isCancelled else { return }
+                guard !self.isCancelled else { return }
                 if let task = send(.code(action), anim) {
                     await task.value
                 }
@@ -328,18 +348,13 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 continuation.finish()
             }
             let consumer = taskManager.addTask { [weak self] in
-                await withTaskGroup(of: Void.self) { group in
-                    for await (action, anim) in stream {
-                        guard !Task.isCancelled else { return }
-                        guard let self else { return }
-                        guard !self.isCancelled else { return }
-                        if let task = self.send(.code(action), anim) {
-                            group.addTask {
-                                await task.value
-                            }
-                        }
+                await Self.consumeActions(
+                    from: stream,
+                    storeProvider: { [weak self] in self },
+                    mapToAction: { action, anim in
+                        (action, anim)
                     }
-                }
+                )
             }
             return Task {
                 await producer.value
@@ -347,19 +362,31 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             }
 
         case let .publisher(publisher, anim):
+            let (stream, continuation) = AsyncStream<Action>.makeStream()
             return taskManager.addTask { [weak self] in
-                await withTaskGroup(of: Void.self) { group in
-                    for await action in publisher.values {
-                        guard !Task.isCancelled else { return }
-                        guard let self else { return }
-                        guard !self.isCancelled else { return }
-                        if let task = self.send(.code(action), anim) {
-                            group.addTask {
-                                await task.value
-                            }
-                        }
+                let cancellable = publisher.sink(
+                    receiveCompletion: { _ in
+                        continuation.finish()
+                    },
+                    receiveValue: { action in
+                        continuation.yield(action)
                     }
-                }
+                )
+
+                await withTaskCancellationHandler(
+                    operation: {
+                        await Self.consumeActions(
+                            from: stream,
+                            storeProvider: { [weak self] in self },
+                            mapToAction: { ($0, anim) }
+                        )
+                        cancellable.cancel()
+                    },
+                    onCancel: {
+                        cancellable.cancel()
+                        continuation.finish()
+                    }
+                )
             }
             
         case .none:
@@ -536,11 +563,21 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 }
 
 public extension StateStore {
+    func values<Value>(on keyPath: KeyPath<State, Value>) -> AnyPublisher<Value, Never> {
+        if isCancelled {
+            return Empty().eraseToAnyPublisher()
+        }
+        
+        return $state
+            .map(keyPath)
+            .prefix(untilOutputFrom: isCancelledPublisher)
+            .eraseToAnyPublisher()
+    }
+
     func updates<Value>(
         on keyPath: KeyPath<State, Value>,
         compare: @escaping (Value, Value) -> Bool) -> AnyPublisher<Value, Never> {
-            $state
-                .map(keyPath)
+            values(on: keyPath)
                 .removeDuplicates(by: compare)
                 .dropFirst()
                 .eraseToAnyPublisher()
@@ -553,8 +590,7 @@ public extension StateStore {
     func distinctValues<Value>(
         on keyPath: KeyPath<State, Value>,
         compare: @escaping (Value, Value) -> Bool) -> AnyPublisher<Value, Never> {
-            $state
-                .map(keyPath)
+            values(on: keyPath)
                 .removeDuplicates(by: compare)
                 .eraseToAnyPublisher()
         }
@@ -562,14 +598,15 @@ public extension StateStore {
     func distinctValues<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> AnyPublisher<Value, Never> {
         distinctValues(on: keyPath, compare: ==)
     }
-    
+
+    @discardableResult
     func bind<OtherNsp: StoreNamespace, OtherValue>(
         to otherStore: OtherNsp.Store,
         on keyPath: KeyPath<OtherNsp.StoreState, OtherValue>,
         with action: @escaping (OtherValue) -> Action?,
         animation: Animation? = nil,
         compare: @escaping (OtherValue, OtherValue) -> Bool
-    ) {
+    ) -> Task<Void, Never>? {
         addEffect(
             .publisher(
                 otherStore
@@ -581,19 +618,21 @@ public extension StateStore {
         )
     }
     
+    @discardableResult
     func bind<OtherNsp: StoreNamespace, OtherValue: Equatable>(
         to otherStore: OtherNsp.Store,
         on keyPath: KeyPath<OtherNsp.StoreState, OtherValue>,
         with action: @escaping (OtherValue) -> Action?
-    ) {
+    ) -> Task<Void, Never>? {
         bind(to: otherStore, on: keyPath, with: action, compare: ==)
     }
     
+    @discardableResult
     func bindPublishedValue<OtherNsp: StoreNamespace>(
         of otherStore: OtherNsp.Store,
         with action: @escaping (OtherNsp.PublishedValue) -> Action,
         animation: Animation? = nil
-    ) {
+    ) -> Task<Void, Never>? {
         addEffect(
             .publisher(
                 otherStore.value.map { action($0) }

@@ -35,7 +35,7 @@
 		09B2D63A29FD75A8002DF6D3 /* DelimiterPickerUI.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = DelimiterPickerUI.swift; sourceTree = "<group>"; };
 		09B2D63E29FD7A69002DF6D3 /* Done.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Done.swift; sourceTree = "<group>"; };
 		09B2D64029FD7A7B002DF6D3 /* DoneUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoneUI.swift; sourceTree = "<group>"; };
-		09B2D64229FD923B002DF6D3 /* AppFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppFlow.swift; path = ../../Shared/AppFlow.swift; sourceTree = "<group>"; };
+		09B2D64229FD923B002DF6D3 /* AppFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppFlow.swift; path = ../../TestSupport/AppFlow.swift; sourceTree = "<group>"; };
 		09B2D66C29FDA005002DF6D3 /* Container.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Container.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		09B2D66E29FDA005002DF6D3 /* ContainerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerApp.swift; sourceTree = "<group>"; };
 		09B2D67029FDA005002DF6D3 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -114,7 +114,7 @@
 				09B2D62229FD6F2B002DF6D3 /* StringPickerUI.swift */,
 			);
 			name = StringPicker;
-			path = ../../Shared/StringPicker;
+			path = ../../TestSupport/StringPicker;
 			sourceTree = "<group>";
 		};
 		09B2D62729FD6F73002DF6D3 /* Frameworks */ = {
@@ -131,7 +131,7 @@
 				09B2D62F29FD721E002DF6D3 /* IntPickerUI.swift */,
 			);
 			name = IntPicker;
-			path = ../../Shared/IntPicker;
+			path = ../../TestSupport/IntPicker;
 			sourceTree = "<group>";
 		};
 		09B2D63829FD75A8002DF6D3 /* DelimiterPicker */ = {
@@ -141,7 +141,7 @@
 				09B2D63A29FD75A8002DF6D3 /* DelimiterPickerUI.swift */,
 			);
 			name = DelimiterPicker;
-			path = ../../Shared/DelimiterPicker;
+			path = ../../TestSupport/DelimiterPicker;
 			sourceTree = "<group>";
 		};
 		09B2D63D29FD7A5F002DF6D3 /* Done */ = {
@@ -151,7 +151,7 @@
 				09B2D64029FD7A7B002DF6D3 /* DoneUI.swift */,
 			);
 			name = Done;
-			path = ../../Shared/Done;
+			path = ../../TestSupport/Done;
 			sourceTree = "<group>";
 		};
 		09B2D66D29FDA005002DF6D3 /* Container */ = {
@@ -221,6 +221,9 @@
 				Base,
 			);
 			mainGroup = 09B2D60229FD6C6C002DF6D3;
+			packageReferences = (
+				0901B7DE29FE255F001B7776 /* XCLocalSwiftPackageReference "../.." */,
+			);
 			productRefGroup = 09B2D60C29FD6C6C002DF6D3 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -463,9 +466,17 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		0901B7DE29FE255F001B7776 /* XCLocalSwiftPackageReference "../.." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../..;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		0901B7DB29FE255F001B7776 /* ReducerArchitecture */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 0901B7DE29FE255F001B7776 /* XCLocalSwiftPackageReference "../.." */;
 			productName = ReducerArchitecture;
 		};
 /* End XCSwiftPackageProductDependency section */

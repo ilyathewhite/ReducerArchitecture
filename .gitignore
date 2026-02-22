@@ -1,5 +1,8 @@
 .DS_Store
 /.build
+/.swiftpm
 /Packages
+Package.resolved
 /*.xcodeproj
 xcuserdata/
+!Tests/TestApp/TestApp.xcodeproj/project.xcworkspace/contents.xcworkspacedata
