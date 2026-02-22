@@ -7,10 +7,15 @@
 
 import SwiftUI
 import ReducerArchitecture
+import AsyncNavigation
 
 struct ContentView: View {
+    func rootPicker() -> RootNavigationNode<StringPicker> {
+        .init(StringPicker.store(title: "Pick flow"))
+    }
+
     var body: some View {
-        NavigationFlow(StringPicker.store(title: "Pick flow")) { flow, proxy in
+        NavigationFlow(rootPicker()) { flow, proxy in
             await AppFlow(flow: flow, proxy: proxy).run()
         }
     }

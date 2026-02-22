@@ -214,6 +214,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     
     public var environment: Environment?
     private let taskManager = TaskManager()
+    private var publisherSubscriptions: [UUID: AnyCancellable] = [:]
     
     public var children: [String: any BasicViewModel] = [:]
 
@@ -257,6 +258,64 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         }
     }
 
+    private func subscribeToPublisher(_ publisher: AnyPublisher<Action, Never>, animation: Animation?) async {
+        let id = UUID()
+        await withCheckedContinuation { continuation in
+            let subscription = publisher
+                .handleEvents(receiveSubscription: { upstreamSubscription in
+                    upstreamSubscription.request(.unlimited)
+                    continuation.resume()
+                })
+                .sink(
+                    receiveCompletion: { [weak self] _ in
+                        self?.removePublisherSubscription(id: id)
+                    },
+                    receiveValue: { [weak self] action in
+                        self?.sendPublisherAction(action, animation: animation)
+                    }
+                )
+            publisherSubscriptions[id] = subscription
+        }
+    }
+
+    private nonisolated func removePublisherSubscription(id: UUID) {
+        Task { @MainActor [weak self] in
+            self?.publisherSubscriptions.removeValue(forKey: id)
+        }
+    }
+
+    private nonisolated func sendPublisherAction(_ action: Action, animation: Animation?) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                guard !self.isCancelled else { return }
+                _ = self.send(.code(action), animation)
+            }
+        }
+        else {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard !self.isCancelled else { return }
+                _ = self.send(.code(action), animation)
+            }
+        }
+    }
+
+    private func cancelAllPublisherSubscriptions() {
+        for subscription in publisherSubscriptions.values {
+            subscription.cancel()
+        }
+        publisherSubscriptions.removeAll()
+    }
+
+    /// Adds an effect and returns a task that represents this effect's completion boundary.
+    ///
+    /// Completion semantics depend on the effect kind:
+    /// - Finite effects (`.action`, `.actions`, `.asyncAction`, `.asyncActionLatest`, `.asyncActions`)
+    ///   complete when all produced actions are sent and any nested returned tasks complete.
+    /// - Long-lived effects (`.publisher`, `.asyncActionSequence`) complete when they are set up to
+    ///   receive values; value forwarding continues in background tasks after the returned task finishes.
+    ///
+    /// Returns `nil` when there is no work to perform (for example, `.none` or an empty `.actions` array).
     @discardableResult
     public func addEffect(_ effect: Effect) -> Task<Void, Never>? {
         switch effect {
@@ -283,7 +342,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 let action = await f()
                 guard !Task.isCancelled else { return }
                 guard let self else { return }
-                guard !isCancelled else { return }
+                guard !self.isCancelled else { return }
                 if let task = send(.code(action), anim) {
                     await task.value
                 }
@@ -294,7 +353,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 let action = await f()
                 guard !Task.isCancelled else { return }
                 guard let self else { return }
-                guard !isCancelled else { return }
+                guard !self.isCancelled else { return }
                 if let task = send(.code(action), anim) {
                     await task.value
                 }
@@ -318,48 +377,41 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             }
             
         case .asyncActionSequence(let f):
-            let (stream, continuation) = AsyncStream<(Action, Animation?)>.makeStream()
-            let producer = taskManager.addTask {
-                let callback = Effect.AsyncActionCallback { action, anim in
-                    guard !Task.isCancelled else { return }
-                    continuation.yield((action, anim))
-                }
-                await f(callback)
-                continuation.finish()
-            }
-            let consumer = taskManager.addTask { [weak self] in
-                await withTaskGroup(of: Void.self) { group in
+            return taskManager.addTask { [weak self] in
+                guard let self else { return }
+                guard !self.isCancelled else { return }
+
+                let (stream, continuation) = AsyncStream<(Action, Animation?)>.makeStream()
+
+                // Consume sequence output and forward actions on the main actor.
+                _ = self.taskManager.addTask { [weak self] in
                     for await (action, anim) in stream {
                         guard !Task.isCancelled else { return }
                         guard let self else { return }
                         guard !self.isCancelled else { return }
-                        if let task = self.send(.code(action), anim) {
-                            group.addTask {
-                                await task.value
-                            }
-                        }
+                        _ = self.send(.code(action), anim)
                     }
                 }
-            }
-            return Task {
-                await producer.value
-                await consumer.value
+
+                // Start producing sequence output, then return once callback is ready.
+                await withCheckedContinuation { setupContinuation in
+                    _ = self.taskManager.addTask {
+                        let callback = Effect.AsyncActionCallback { action, anim in
+                            guard !Task.isCancelled else { return }
+                            continuation.yield((action, anim))
+                        }
+                        setupContinuation.resume()
+                        await f(callback)
+                        continuation.finish()
+                    }
+                }
             }
 
         case let .publisher(publisher, anim):
             return taskManager.addTask { [weak self] in
-                await withTaskGroup(of: Void.self) { group in
-                    for await action in publisher.values {
-                        guard !Task.isCancelled else { return }
-                        guard let self else { return }
-                        guard !self.isCancelled else { return }
-                        if let task = self.send(.code(action), anim) {
-                            group.addTask {
-                                await task.value
-                            }
-                        }
-                    }
-                }
+                guard let self else { return }
+                guard !self.isCancelled else { return }
+                await self.subscribeToPublisher(publisher, animation: anim)
             }
             
         case .none:
@@ -473,6 +525,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 _cancel()
                 isCancelled = true
                 taskManager.cancelAllTasks()
+                cancelAllPublisherSubscriptions()
                 syncEffect = nil
                 effect = nil
                 environment = nil
@@ -562,14 +615,15 @@ public extension StateStore {
     func distinctValues<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> AnyPublisher<Value, Never> {
         distinctValues(on: keyPath, compare: ==)
     }
-    
+
+    @discardableResult
     func bind<OtherNsp: StoreNamespace, OtherValue>(
         to otherStore: OtherNsp.Store,
         on keyPath: KeyPath<OtherNsp.StoreState, OtherValue>,
         with action: @escaping (OtherValue) -> Action?,
         animation: Animation? = nil,
         compare: @escaping (OtherValue, OtherValue) -> Bool
-    ) {
+    ) -> Task<Void, Never>? {
         addEffect(
             .publisher(
                 otherStore
@@ -581,27 +635,49 @@ public extension StateStore {
         )
     }
     
+    @discardableResult
     func bind<OtherNsp: StoreNamespace, OtherValue: Equatable>(
         to otherStore: OtherNsp.Store,
         on keyPath: KeyPath<OtherNsp.StoreState, OtherValue>,
         with action: @escaping (OtherValue) -> Action?
-    ) {
+    ) -> Task<Void, Never>? {
         bind(to: otherStore, on: keyPath, with: action, compare: ==)
     }
     
+    @discardableResult
     func bindPublishedValue<OtherNsp: StoreNamespace>(
         of otherStore: OtherNsp.Store,
         with action: @escaping (OtherNsp.PublishedValue) -> Action,
         animation: Animation? = nil
-    ) {
-        addEffect(
+    ) -> Task<Void, Never>? {
+        let publisher = otherStore.publishedValue
+            .handleEvents(
+                receiveOutput: { _ in
+                    otherStore.hasRequest = false
+                },
+                receiveRequest: { _ in
+                    otherStore.hasRequest = true
+                }
+            )
+            .map { action($0) }
+            .catch { _ in Just(.cancel) }
+            .eraseToAnyPublisher()
+
+        guard let effectTask = addEffect(
             .publisher(
-                otherStore.value.map { action($0) }
-                    .catch { _ in Just(.cancel) }
-                    .eraseToAnyPublisher(),
+                publisher,
                 animation
             )
-        )
+        ) else {
+            return nil
+        }
+
+        return Task {
+            await effectTask.value
+            if !otherStore.hasRequest {
+                await otherStore.getRequest()
+            }
+        }
     }
 }
 
