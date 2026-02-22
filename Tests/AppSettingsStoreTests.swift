@@ -43,20 +43,41 @@ extension AppSettingsTests.AppSettingsStoreTests {
         let animated = TestAppSettingsStore.Action.set(\.launchCount, 2, animation: .default)
 
         // Trigger action pattern matching.
-        guard case .mutating(_, let nonAnimatedFlag, let nonAnimatedAnimation) = nonAnimated else {
-            #expect(Bool(false))
-            return
+        let nonAnimatedIsMutating: Bool
+        let nonAnimatedIsAnimated: Bool
+        let nonAnimatedAnimationIsNil: Bool
+        switch nonAnimated {
+        case .mutating(_, let isAnimated, let animation):
+            nonAnimatedIsMutating = true
+            nonAnimatedIsAnimated = isAnimated
+            nonAnimatedAnimationIsNil = (animation == nil)
+        default:
+            nonAnimatedIsMutating = false
+            nonAnimatedIsAnimated = false
+            nonAnimatedAnimationIsNil = false
         }
-        guard case .mutating(_, let animatedFlag, let animatedAnimation) = animated else {
-            #expect(Bool(false))
-            return
+
+        let animatedIsMutating: Bool
+        let animatedIsAnimated: Bool
+        let animatedAnimationIsNil: Bool
+        switch animated {
+        case .mutating(_, let isAnimated, let animation):
+            animatedIsMutating = true
+            animatedIsAnimated = isAnimated
+            animatedAnimationIsNil = (animation == nil)
+        default:
+            animatedIsMutating = false
+            animatedIsAnimated = false
+            animatedAnimationIsNil = true
         }
 
         // Expect animation metadata shape.
-        #expect(nonAnimatedFlag == false)
-        #expect(nonAnimatedAnimation == nil)
-        #expect(animatedFlag == true)
-        #expect(animatedAnimation != nil)
+        #expect(nonAnimatedIsMutating)
+        #expect(nonAnimatedIsAnimated == false)
+        #expect(nonAnimatedAnimationIsNil)
+        #expect(animatedIsMutating)
+        #expect(animatedIsAnimated == true)
+        #expect(!animatedAnimationIsNil)
     }
 
     // Call store.set on launchCount.

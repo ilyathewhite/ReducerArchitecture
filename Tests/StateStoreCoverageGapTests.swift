@@ -17,7 +17,7 @@ private enum NestedTaskGapNsp: StoreNamespace {
     enum EffectAction {
         case spawnAsync(Int)
         case emitAsync(Int)
-        case emitAsyncLatest(value: Int, delay: UInt64)
+        case emitAsyncLatest(value: Int, delay: TimeInterval)
         case emitAsyncActions([Int])
         case emitAsyncSequence([Int])
         case subscribeToPublisher
@@ -58,7 +58,7 @@ extension NestedTaskGapNsp {
 
         case .emitAsyncLatest(let value, let delay):
             return .asyncActionLatest(key: "latest") {
-                try? await Task.sleep(nanoseconds: delay)
+                try? await Task.sleep(for: .seconds(delay))
                 return .effect(.spawnAsync(value))
             }
 
@@ -398,8 +398,8 @@ extension StateStoreTests.StateStoreCoverageGapTests {
         let store = NestedTaskGapNsp.store()
 
         // Trigger competing async-latest operations.
-        let first = store.send(.effect(.emitAsyncLatest(value: 1, delay: 150_000_000)))
-        let second = store.send(.effect(.emitAsyncLatest(value: 2, delay: 20_000_000)))
+        let first = store.send(.effect(.emitAsyncLatest(value: 1, delay: 0.15)))
+        let second = store.send(.effect(.emitAsyncLatest(value: 2, delay: 0.02)))
         await first?.value
         await second?.value
 

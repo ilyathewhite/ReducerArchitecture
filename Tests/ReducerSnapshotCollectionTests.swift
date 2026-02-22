@@ -24,10 +24,7 @@ extension SnapshotTests.ReducerSnapshotCollectionTests {
         let collection = ReducerSnapshotCollection(title: title, snapshots: snapshots)
 
         // Trigger save and reload.
-        guard let path = try collection.save() else {
-            #expect(Bool(false))
-            return
-        }
+        let path = try #require(try collection.save())
         defer { try? FileManager.default.removeItem(atPath: path) }
         let loaded = try ReducerSnapshotCollection.load(from: URL(fileURLWithPath: path))
 
@@ -35,25 +32,52 @@ extension SnapshotTests.ReducerSnapshotCollectionTests {
         #expect(loaded.title == title)
         #expect(loaded.snapshots.count == 3)
 
-        guard let input = inputData(from: loaded.snapshots[0]) else {
-            #expect(Bool(false))
-            return
+        let inputIsInput: Bool
+        let inputAction: String?
+        let inputNestedLevel: Int?
+        switch loaded.snapshots[0] {
+        case .input(let input):
+            inputIsInput = true
+            inputAction = input.action
+            inputNestedLevel = input.nestedLevel
+        default:
+            inputIsInput = false
+            inputAction = nil
+            inputNestedLevel = nil
         }
-        #expect(input.action == "mutating.update")
-        #expect(input.nestedLevel == 0)
+        #expect(inputIsInput)
+        #expect(inputAction == "mutating.update")
+        #expect(inputNestedLevel == 0)
 
-        guard let stateChange = stateChangeData(from: loaded.snapshots[1]) else {
-            #expect(Bool(false))
-            return
+        let stateChangeIsStateChange: Bool
+        let stateChangeNestedLevel: Int?
+        switch loaded.snapshots[1] {
+        case .stateChange(let stateChange):
+            stateChangeIsStateChange = true
+            stateChangeNestedLevel = stateChange.nestedLevel
+        default:
+            stateChangeIsStateChange = false
+            stateChangeNestedLevel = nil
         }
-        #expect(stateChange.nestedLevel == 1)
+        #expect(stateChangeIsStateChange)
+        #expect(stateChangeNestedLevel == 1)
 
-        guard let output = outputData(from: loaded.snapshots[2]) else {
-            #expect(Bool(false))
-            return
+        let outputIsOutput: Bool
+        let outputEffect: String?
+        let outputNestedLevel: Int?
+        switch loaded.snapshots[2] {
+        case .output(let output):
+            outputIsOutput = true
+            outputEffect = output.effect
+            outputNestedLevel = output.nestedLevel
+        default:
+            outputIsOutput = false
+            outputEffect = nil
+            outputNestedLevel = nil
         }
-        #expect(output.effect == "none")
-        #expect(output.nestedLevel == 2)
+        #expect(outputIsOutput)
+        #expect(outputEffect == "none")
+        #expect(outputNestedLevel == 2)
     }
 
     // Map mixed snapshots to state-change flags.
@@ -87,24 +111,4 @@ extension SnapshotTests.ReducerSnapshotCollectionTests {
         }
     }
 
-    private func inputData(from snapshot: ReducerSnapshotData) -> ReducerSnapshotData.Input? {
-        guard case .input(let input) = snapshot else {
-            return nil
-        }
-        return input
-    }
-
-    private func stateChangeData(from snapshot: ReducerSnapshotData) -> ReducerSnapshotData.StateChange? {
-        guard case .stateChange(let stateChange) = snapshot else {
-            return nil
-        }
-        return stateChange
-    }
-
-    private func outputData(from snapshot: ReducerSnapshotData) -> ReducerSnapshotData.Output? {
-        guard case .output(let output) = snapshot else {
-            return nil
-        }
-        return output
-    }
 }

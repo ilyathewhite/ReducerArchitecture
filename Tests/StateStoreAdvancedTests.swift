@@ -20,7 +20,7 @@ private enum EffectHarnessNsp: StoreNamespace {
         case emitAction(Int)
         case emitActions([Int])
         case emitAsync(Int)
-        case emitAsyncLatest(value: Int, delay: UInt64)
+        case emitAsyncLatest(value: Int, delay: TimeInterval)
         case emitAsyncActions([Int])
         case emitSequence([Int])
         case subscribeToPublisher
@@ -71,7 +71,7 @@ extension EffectHarnessNsp {
 
         case .emitAsyncLatest(let value, let delay):
             return .asyncActionLatest(key: "latest") {
-                try? await Task.sleep(nanoseconds: delay)
+                try? await Task.sleep(for: .seconds(delay))
                 return .mutating(.append(value))
             }
 
@@ -200,8 +200,8 @@ extension StateStoreTests.StateStoreAdvancedTests {
         let store = EffectHarnessNsp.store()
 
         // Trigger competing async-latest effects.
-        let first = store.send(.effect(.emitAsyncLatest(value: 1, delay: 150_000_000)))
-        let second = store.send(.effect(.emitAsyncLatest(value: 2, delay: 20_000_000)))
+        let first = store.send(.effect(.emitAsyncLatest(value: 1, delay: 0.15)))
+        let second = store.send(.effect(.emitAsyncLatest(value: 2, delay: 0.02)))
         await first?.value
         await second?.value
 
@@ -395,11 +395,8 @@ extension LifecycleTests.StateStoreLifecycleTests {
 
         // Expect deallocation and event cleanup.
         #expect(weakStore == nil)
-        guard let trackedID else {
-            #expect(Bool(false))
-            return
-        }
-        #expect(storeLifecycleLog.lastEvent[trackedID] == nil)
+        let unwrappedTrackedID = try #require(trackedID)
+        #expect(storeLifecycleLog.lastEvent[unwrappedTrackedID] == nil)
     }
 }
 

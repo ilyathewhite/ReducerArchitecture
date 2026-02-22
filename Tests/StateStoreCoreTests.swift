@@ -137,11 +137,11 @@ extension StateStoreTests.StateStoreCoreTests {
 
         // Trigger competing asyncLatest actions.
         let first = store.addEffect(.asyncActionLatest(key: "load") {
-            try? await Task.sleep(nanoseconds: 200_000_000)
+            try? await Task.sleep(for: .seconds(0.2))
             return .mutating(.set(1))
         })
         let second = store.addEffect(.asyncActionLatest(key: "load") {
-            try? await Task.sleep(nanoseconds: 20_000_000)
+            try? await Task.sleep(for: .seconds(0.02))
             return .mutating(.set(2))
         })
         await first?.value

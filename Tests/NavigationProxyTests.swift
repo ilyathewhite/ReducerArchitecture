@@ -86,19 +86,24 @@ extension NavigationProxyTests {
     private func expectTypeMismatch(
         _ operation: () async throws -> Void
     ) async {
+        var didCatchTypeMismatch = false
+        var didCatchUnexpectedError = false
+
         do {
             try await operation()
-            #expect(Bool(false))
         }
         catch let error as TestNavigationProxy.CurrentViewModelError {
             switch error {
             case .typeMismatch:
-                #expect(Bool(true))
+                didCatchTypeMismatch = true
             }
         }
         catch {
-            #expect(Bool(false))
+            didCatchUnexpectedError = true
         }
+
+        #expect(didCatchTypeMismatch)
+        #expect(!didCatchUnexpectedError)
     }
 }
 #endif
