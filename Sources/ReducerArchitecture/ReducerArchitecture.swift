@@ -573,6 +573,22 @@ public extension StateStore {
             .prefix(untilOutputFrom: isCancelledPublisher)
             .eraseToAnyPublisher()
     }
+    
+    func asyncValues<Value>(on keyPath: KeyPath<State, Value>) -> AsyncStream<Value> {
+        let (stream, continuation) = AsyncStream<Value>.makeStream()
+        let cancellable = values(on: keyPath).sink(
+            receiveCompletion: { _ in
+                continuation.finish()
+            },
+            receiveValue: { value in
+                continuation.yield(value)
+            }
+        )
+        continuation.onTermination = { _ in
+            cancellable.cancel()
+        }
+        return stream
+    }
 
     func updates<Value>(
         on keyPath: KeyPath<State, Value>,

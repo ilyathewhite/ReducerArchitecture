@@ -103,7 +103,7 @@ extension StateStoreTests.StateStoreCoreTests {
 
         var didSendUpdates = false
         var targetValues: [Int] = []
-        for await value in target.values(on: \.value).values {
+        for await value in target.asyncValues(on: \.value) {
             targetValues.append(value)
 
             // Wait for initial bind propagation, then emit a burst with one duplicate.

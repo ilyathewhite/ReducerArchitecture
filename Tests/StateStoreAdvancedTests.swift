@@ -302,7 +302,7 @@ extension StateStoreTests.StateStoreAdvancedTests {
 
         // Capture the initial state and the forwarded state update from target.
         var targetValues = [[Int]]()
-        for await values in target.values(on: \.values).values {
+        for await values in target.asyncValues(on: \.values) {
             if !source.isCancelled { break }
             targetValues.append(values)
         }
