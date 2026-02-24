@@ -354,6 +354,20 @@ extension StateStoreTests.StateStoreCoverageGapTests {
         #expect(store.state.values == [2])
     }
 
+    // Send animated mutating action without explicit animation.
+    // Expect default animation branch mutates state.
+    @Test
+    func animatedMutatingActionWithoutExplicitAnimationUsesDefault() {
+        // Set up store.
+        let store = NestedTaskGapNsp.store()
+
+        // Trigger animated action with nil animation payload.
+        _ = store.send(.mutating(.append(3), animated: true))
+
+        // Expect state update.
+        #expect(store.state.values == [3])
+    }
+
     // Add .actions with nested async effects.
     // Expect returned task waits for all values.
     @Test

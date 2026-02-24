@@ -20,6 +20,37 @@ private enum CounterNsp: StoreNamespace {
     }
 }
 
+private actor AsyncSequenceCancellationProbe {
+    private var started = false
+    private var cancelled = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func markStarted() {
+        guard !started else { return }
+        started = true
+        let waiters = self.waiters
+        self.waiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func waitUntilStarted() async {
+        if started { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func markCancelled() {
+        cancelled = true
+    }
+
+    func wasCancelled() -> Bool {
+        cancelled
+    }
+}
+
 extension CounterNsp {
     @MainActor
     static func store(value: Int = 0) -> Store {
@@ -87,6 +118,61 @@ extension StateStoreTests.StateStoreCoreTests {
         _ = cancellable
     }
 
+    // Observe values stream through cancellation.
+    // Expect initial/current values then completion on cancel.
+    @Test
+    func valuesPublishesCurrentAndCompletesAfterCancel() async {
+        // Set up store and subscriber.
+        let store = CounterNsp.store(value: 0)
+        var received: [Int] = []
+        var didComplete = false
+        let cancellable = store.values(on: \.value).sink(
+            receiveCompletion: { _ in
+                didComplete = true
+            },
+            receiveValue: { value in
+                received.append(value)
+            }
+        )
+
+        // Trigger one mutation then cancel.
+        store.send(.mutating(.set(1)))
+        store.cancel()
+        store.send(.mutating(.set(2)))
+        await Task.yield()
+
+        // Expect values up to cancellation and completed stream.
+        #expect(received == [0, 1])
+        #expect(didComplete)
+        _ = cancellable
+    }
+
+    // Observe values stream after pre-cancelled store.
+    // Expect empty publisher completes immediately.
+    @Test
+    func valuesOnCancelledStoreReturnsEmptyPublisher() {
+        // Set up cancelled store.
+        let store = CounterNsp.store(value: 0)
+        store.cancel()
+
+        // Subscribe after cancellation.
+        var received: [Int] = []
+        var didComplete = false
+        let cancellable = store.values(on: \.value).sink(
+            receiveCompletion: { _ in
+                didComplete = true
+            },
+            receiveValue: { value in
+                received.append(value)
+            }
+        )
+
+        // Expect immediate completion with no values.
+        #expect(received.isEmpty)
+        #expect(didComplete)
+        _ = cancellable
+    }
+
     // Bind source values into target reducer.
     // Expect only deduped source updates are forwarded.
     @Test
@@ -149,6 +235,64 @@ extension StateStoreTests.StateStoreCoreTests {
 
         // Expect only latest result applies.
         #expect(store.state.value == 2)
+        #expect(store.state.mutationCount == 1)
+    }
+
+    // Start two async sequence latest effects under same key.
+    // Expect only latest sequence mutates state.
+    @Test
+    func asyncActionSequenceLatestCancelsPreviousActionWithSameKey() async {
+        // Set up store.
+        let store = CounterNsp.store(value: 0)
+
+        // Trigger competing async sequence latest effects.
+        let first = store.addEffect(.asyncActionSequenceLatest(key: "load") { send in
+            try? await Task.sleep(for: .seconds(0.2))
+            send(.mutating(.set(1)))
+        })
+        let second = store.addEffect(.asyncActionSequenceLatest(key: "load") { send in
+            try? await Task.sleep(for: .seconds(0.02))
+            send(.mutating(.set(2)))
+        })
+        await first?.value
+        await second?.value
+
+        // Expect only latest result applies.
+        #expect(store.state.value == 2)
+        #expect(store.state.mutationCount == 1)
+    }
+
+    // Start a running async sequence latest effect, then replace it with the same key.
+    // Expect the running sequence is cancelled and latest mutation is applied.
+    @Test
+    func asyncActionSequenceLatestCancelsRunningSequenceWithSameKey() async {
+        // Set up store and cancellation probe.
+        let store = CounterNsp.store(value: 0)
+        let probe = AsyncSequenceCancellationProbe()
+
+        // Start a sequence that stays active until cancellation.
+        let first = store.addEffect(.asyncActionSequenceLatest(key: "load") { _ in
+            await probe.markStarted()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            await probe.markCancelled()
+        })
+
+        // Wait until the first sequence is definitely running before replacing it.
+        await probe.waitUntilStarted()
+
+        // Replace running sequence with latest effect under the same key.
+        let second = store.addEffect(.asyncActionSequenceLatest(key: "load") { send in
+            send(.mutating(.set(3)))
+        })
+
+        await first?.value
+        await second?.value
+
+        // Expect first sequence cancellation and latest mutation.
+        #expect(await probe.wasCancelled())
+        #expect(store.state.value == 3)
         #expect(store.state.mutationCount == 1)
     }
 

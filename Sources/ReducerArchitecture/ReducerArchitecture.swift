@@ -193,6 +193,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         case asyncActionLatest(key: String, Animation? = nil, () async -> Action)
         case asyncActions(Animation? = nil, () async -> [Action])
         case asyncActionSequence((_ callback: AsyncActionCallback) async -> Void)
+        case asyncActionSequenceLatest(key: String, (_ callback: AsyncActionCallback) async -> Void)
         case publisher(AnyPublisher<Action, Never>, Animation? = nil)
         case none // cannot use Effect? in reducer callbacks because it breaks the compiler
         
@@ -277,6 +278,76 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         }
     }
 
+    private static func runAsyncAction(
+        _ asyncAction: () async -> Action,
+        animation: Animation?,
+        storeProvider: @escaping () -> StateStore?
+    ) async {
+        let action = await asyncAction()
+        guard !Task.isCancelled else { return }
+        guard let store = storeProvider() else { return }
+        guard !store.isCancelled else { return }
+        if let task = store.send(.code(action), animation) {
+            await task.value
+        }
+    }
+
+    private static func addAsyncActionTask(
+        taskManager: TaskManager,
+        cancellingPreviousWithKey key: String? = nil,
+        animation: Animation?,
+        asyncAction: @escaping () async -> Action,
+        storeProvider: @escaping () -> StateStore?
+    ) -> Task<Void, Never> {
+        taskManager.addTask(cancellingPreviousWithKey: key) {
+            await runAsyncAction(
+                asyncAction,
+                animation: animation,
+                storeProvider: storeProvider
+            )
+        }
+    }
+
+    private static func addAsyncActionSequenceTask(
+        taskManager: TaskManager,
+        cancellingPreviousWithKey key: String? = nil,
+        asyncActionSequence: @escaping (_ callback: Effect.AsyncActionCallback) async -> Void,
+        storeProvider: @escaping () -> StateStore?
+    ) -> Task<Void, Never> {
+        let (stream, continuation) = AsyncStream<(Action, Animation?)>.makeStream()
+
+        let producer = taskManager.addTask(cancellingPreviousWithKey: key.map { "\($0)-producer" }) {
+            await withTaskCancellationHandler(
+                operation: {
+                    let callback = Effect.AsyncActionCallback { action, anim in
+                        guard !Task.isCancelled else { return }
+                        continuation.yield((action, anim))
+                    }
+                    await asyncActionSequence(callback)
+                    continuation.finish()
+                },
+                onCancel: {
+                    continuation.finish()
+                }
+            )
+        }
+
+        let consumer = taskManager.addTask(cancellingPreviousWithKey: key.map { "\($0)-consumer" }) {
+            await consumeActions(
+                from: stream,
+                storeProvider: storeProvider,
+                mapToAction: { action, anim in
+                    (action, anim)
+                }
+            )
+        }
+
+        return Task {
+            await producer.value
+            await consumer.value
+        }
+    }
+
     @discardableResult
     public func addEffect(_ effect: Effect) -> Task<Void, Never>? {
         switch effect {
@@ -299,26 +370,21 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             }
 
         case let .asyncAction(anim, f):
-            return taskManager.addTask { [weak self] in
-                let action = await f()
-                guard !Task.isCancelled else { return }
-                guard let self else { return }
-                guard !self.isCancelled else { return }
-                if let task = send(.code(action), anim) {
-                    await task.value
-                }
-            }
+            return Self.addAsyncActionTask(
+                taskManager: taskManager,
+                animation: anim,
+                asyncAction: f,
+                storeProvider: { [weak self] in self }
+            )
 
         case let .asyncActionLatest(key, anim, f):
-            return taskManager.addTask(cancellingPreviousWithKey: key) { [weak self] in
-                let action = await f()
-                guard !Task.isCancelled else { return }
-                guard let self else { return }
-                guard !self.isCancelled else { return }
-                if let task = send(.code(action), anim) {
-                    await task.value
-                }
-            }
+            return Self.addAsyncActionTask(
+                taskManager: taskManager,
+                cancellingPreviousWithKey: key,
+                animation: anim,
+                asyncAction: f,
+                storeProvider: { [weak self] in self }
+            )
 
         case .asyncActions(let anim, let f):
             return taskManager.addTask { [weak self] in
@@ -336,30 +402,21 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                     }
                 }
             }
-            
+
         case .asyncActionSequence(let f):
-            let (stream, continuation) = AsyncStream<(Action, Animation?)>.makeStream()
-            let producer = taskManager.addTask {
-                let callback = Effect.AsyncActionCallback { action, anim in
-                    guard !Task.isCancelled else { return }
-                    continuation.yield((action, anim))
-                }
-                await f(callback)
-                continuation.finish()
-            }
-            let consumer = taskManager.addTask { [weak self] in
-                await Self.consumeActions(
-                    from: stream,
-                    storeProvider: { [weak self] in self },
-                    mapToAction: { action, anim in
-                        (action, anim)
-                    }
-                )
-            }
-            return Task {
-                await producer.value
-                await consumer.value
-            }
+            return Self.addAsyncActionSequenceTask(
+                taskManager: taskManager,
+                asyncActionSequence: f,
+                storeProvider: { [weak self] in self }
+            )
+
+        case let .asyncActionSequenceLatest(key, f):
+            return Self.addAsyncActionSequenceTask(
+                taskManager: taskManager,
+                cancellingPreviousWithKey: key,
+                asyncActionSequence: f,
+                storeProvider: { [weak self] in self }
+            )
 
         case let .publisher(publisher, anim):
             let (stream, continuation) = AsyncStream<Action>.makeStream()
