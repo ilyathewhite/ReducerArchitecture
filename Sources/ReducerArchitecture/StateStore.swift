@@ -1,10 +1,5 @@
-//
-//  ReducerArchitecture.swift
-//  Rocket Insights
-//
+//  StateStore.swift
 //  Created by Ilya Belenkiy on 03/30/21.
-//  Copyright © 2021 Rocket Insights. All rights reserved.
-//
 
 import FoundationEx
 #if canImport(AsyncNavigation)

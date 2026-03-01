@@ -1,9 +1,5 @@
-//
-//  ReducerArchitectureAppSettings.swift
-//  
-//
+//  AppSettings.swift
 //  Created by Ilya Belenkiy on 5/13/23.
-//
 
 import Foundation
 import FoundationEx

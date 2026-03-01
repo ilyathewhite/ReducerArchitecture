@@ -1,9 +1,5 @@
-//
-//  ReducerArchitectureNavigation.swift
-//  ReducerArchitecture
-//
+//  NavigationTesting.swift
 //  Created by Ilya Belenkiy on 11/11/25.
-//
 
 import AsyncNavigation
 

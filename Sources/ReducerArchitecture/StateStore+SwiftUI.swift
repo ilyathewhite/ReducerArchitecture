@@ -1,9 +1,5 @@
-//
-//  File.swift
-//  
-//
+//  StateStore+SwiftUI.swift
 //  Created by Ilya Belenkiy on 8/28/21.
-//
 
 #if canImport(SwiftUI)
 import SwiftUI

@@ -1,8 +1,5 @@
-//
-//  ReducerArchitectureSessionTracing.swift
-//
+//  SessionTracing.swift
 //  Created by Ilya Belenkiy on 2/25/26.
-//
 
 import Foundation
 import Combine
@@ -54,11 +51,11 @@ func sessionTraceHandleDeinit(
 }
 
 // Session tracing support only. The store runtime calls into these helpers
-// from ReducerArchitecture.swift when tracing is enabled.
+// from StateStore.swift when tracing is enabled.
 extension StateStore {
     /// Carries the tracing lineage for one `send` operation.
     ///
-    /// `ReducerArchitecture.swift` threads this object through every internal send so the
+    /// `StateStore.swift` threads this object through every internal send so the
     /// recorder can answer three questions for the resulting action node:
     /// 1. Who caused this send?
     /// 2. Should it inherit an existing animation lineage?
@@ -128,7 +125,7 @@ extension StateStore {
 
     /// Describes the traced action context that an effect should inherit.
     ///
-    /// `ReducerArchitecture.swift` builds this right before handing an `Effect` to `addEffect`.
+    /// `StateStore.swift` builds this right before handing an `Effect` to `addEffect`.
     /// It lets tracing preserve the parent action/effect lineage even when the effect later
     /// emits work on another task.
     struct SessionTraceEffectContext {

@@ -1,8 +1,5 @@
-//
-//  ReducerArchitectureTemplates.swift
-//
+//  XcodeTemplates.swift
 //  Created by Ilya Belenkiy on 3/15/23.
-//
 
 import Foundation
 

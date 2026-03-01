@@ -1,8 +1,5 @@
-//
-//  ReducerArchitectureSessionGraph.swift
-//
+//  SessionGraph.swift
 //  Created by Ilya Belenkiy on 2/25/26.
-//
 
 import Foundation
 import FoundationEx
