@@ -18,7 +18,7 @@ let package = Package(
         .package(url: "https://github.com/ilyathewhite/CombineEx.git", .upToNextMajor(from: "1.0.5")),
         .package(url: "https://github.com/ilyathewhite/AsyncNavigation", .upToNextMajor(from: "1.0.12")),
         .package(url: "https://github.com/pointfreeco/swift-tagged.git", .upToNextMajor(from: "0.10.0")),
-        .package(url: "https://github.com/ilyathewhite/GraphStorage.git", branch: "main")
+        .package(url: "https://github.com/ilyathewhite/GraphStorage.git", .branch("main"))
     ],
     targets: [
         .target(
