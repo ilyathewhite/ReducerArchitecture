@@ -31,11 +31,11 @@ extension SnapshotGapNsp {
     }
 }
 
-extension SnapshotTests {
-    @Suite @MainActor struct SnapshotCoverageTests {}
+extension SessionTraceTests {
+    @Suite @MainActor struct SessionTraceCoverageTests {}
 }
 
-extension SnapshotTests.SnapshotCoverageTests {
+extension SessionTraceTests.SessionTraceCoverageTests {
     // MARK: - Persistence
 
     // Save collection when ReducerLogs is missing.
@@ -63,7 +63,10 @@ extension SnapshotTests.SnapshotCoverageTests {
 
         // Trigger save with unique collection title.
         let title = "create-folder-\(UUID().uuidString)"
-        let collection = ReducerSnapshotCollection(title: title, snapshots: [])
+        let collection = SessionTraceCollection(
+            title: title,
+            sessionGraph: SessionGraph(storeInstanceID: "coverage.s1", nodes: [], edges: [])
+        )
         let savedPath = try collection.save()
 
         // Expect folder and file created.
@@ -81,7 +84,10 @@ extension SnapshotTests.SnapshotCoverageTests {
     func snapshotSaveReturnsNilWhenPathHasMissingIntermediateDirectories() throws {
         // Set up nested-title collection.
         let title = "nested/\(UUID().uuidString)/snapshot"
-        let collection = ReducerSnapshotCollection(title: title, snapshots: [])
+        let collection = SessionTraceCollection(
+            title: title,
+            sessionGraph: SessionGraph(storeInstanceID: "coverage.s1", nodes: [], edges: [])
+        )
 
         // Trigger save.
         let savedPath = try collection.save()
@@ -93,27 +99,27 @@ extension SnapshotTests.SnapshotCoverageTests {
     // Fail snapshot save then save again successfully.
     // Expect failed save keeps pending snapshots for retry.
     @Test
-    func saveSnapshotsIfNeededKeepsPendingSnapshotsAfterFailedSave() throws {
+    func saveSessionTraceIfNeededKeepsPendingTraceAfterFailedSave() throws {
         // Set up store with snapshot logging.
         let store = SnapshotGapNsp.store()
         let successfulTitle = "snapshot-success-\(UUID().uuidString)"
-        let successfulURL = try snapshotFileURL(title: successfulTitle)
+        let successfulURL = try sessionTraceFileURL(title: successfulTitle)
         defer { try? FileManager.default.removeItem(at: successfulURL) }
-        store.logConfig.saveSnapshots = true
+        store.logConfig.saveSessionTrace = true
 
         // Trigger failing save, then successful save.
 
-        store.logConfig.snapshotsFilename = "invalid/\(UUID().uuidString)/snap"
+        store.logConfig.sessionTraceFilename = "invalid/\(UUID().uuidString)/snap"
         store.send(.mutating(.append(1)))
-        store.saveSnapshotsIfNeeded()
+        store.saveSessionTraceIfNeeded()
 
-        store.logConfig.snapshotsFilename = successfulTitle
+        store.logConfig.sessionTraceFilename = successfulTitle
         store.send(.mutating(.append(2)))
-        store.saveSnapshotsIfNeeded()
+        store.saveSessionTraceIfNeeded()
 
         // Expect first snapshot batch persisted on retry.
-        let collection = try ReducerSnapshotCollection.load(from: successfulURL)
-        #expect(collection.snapshots.count == 6)
+        let collection = try SessionTraceCollection.load(from: successfulURL)
+        #expect(actionNodes(in: collection).count == 2)
         #expect(lastValuesStateString(in: collection) == "[1, 2]")
     }
 
@@ -127,27 +133,27 @@ extension SnapshotTests.SnapshotCoverageTests {
         return root.appendingPathComponent("ReducerLogs")
     }
 
-    private func snapshotFileURL(title: String) throws -> URL {
+    private func sessionTraceFileURL(title: String) throws -> URL {
         try reducerLogsFolderURL()
             .appendingPathComponent("\(title)", conformingTo: .data)
             .appendingPathExtension("lzma")
     }
 
-    private func lastValuesStateString(in collection: ReducerSnapshotCollection) -> String? {
-        for snapshot in collection.snapshots.reversed() {
-            switch snapshot {
-            case .input(let input):
-                if let value = input.state.first(where: { $0.property == "values" })?.value {
-                    return value
-                }
-            case .stateChange(let stateChange):
-                if let value = stateChange.state.first(where: { $0.property == "values" })?.value {
-                    return value
-                }
-            case .output(let output):
-                if let value = output.state.first(where: { $0.property == "values" })?.value {
-                    return value
-                }
+    private func actionNodes(in collection: SessionTraceCollection) -> [SessionGraph.ActionNode] {
+        collection.sessionGraph.nodes.compactMap { node -> SessionGraph.ActionNode? in
+            guard case .action(let actionNode) = node else { return nil }
+            return actionNode
+        }
+        .sorted(by: { $0.order < $1.order })
+    }
+
+    private func lastValuesStateString(in collection: SessionTraceCollection) -> String? {
+        for actionNode in actionNodes(in: collection).reversed() {
+            if let value = actionNode.stateAfter?.first(where: { $0.property == "values" })?.value {
+                return value
+            }
+            if let value = actionNode.stateBefore.first(where: { $0.property == "values" })?.value {
+                return value
             }
         }
         return nil

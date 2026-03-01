@@ -16,12 +16,20 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/ilyathewhite/FoundationEx.git", .upToNextMajor(from: "1.0.13")),
         .package(url: "https://github.com/ilyathewhite/CombineEx.git", .upToNextMajor(from: "1.0.5")),
-        .package(url: "https://github.com/ilyathewhite/AsyncNavigation", .upToNextMajor(from: "1.0.12"))
+        .package(url: "https://github.com/ilyathewhite/AsyncNavigation", .upToNextMajor(from: "1.0.12")),
+        .package(url: "https://github.com/pointfreeco/swift-tagged.git", .upToNextMajor(from: "0.10.0")),
+        .package(path: "../GraphStorage")
     ],
     targets: [
         .target(
             name: "ReducerArchitecture",
-            dependencies: ["CombineEx", "AsyncNavigation"],
+            dependencies: [
+                "FoundationEx",
+                "CombineEx",
+                "AsyncNavigation",
+                .product(name: "Tagged", package: "swift-tagged"),
+                "GraphStorage"
+            ],
             swiftSettings: [
 //                .unsafeFlags([
 //                    "-Xfrontend",

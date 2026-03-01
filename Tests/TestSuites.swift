@@ -10,7 +10,7 @@ struct AppSettingsTests {}
 struct SwiftUIStoreTests {}
 
 @Suite(.serialized)
-struct SnapshotTests {}
+struct SessionTraceTests {}
 
 @Suite(.serialized)
 struct LifecycleTests {}

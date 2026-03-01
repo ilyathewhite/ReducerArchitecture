@@ -172,18 +172,23 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         /// This type provides a workaround, making it possible to call the wrapped callback
         /// with only the action, ommiting animation if it's nil.
         public struct AsyncActionCallback {
-            private let callback: (Action, Animation?) -> Void
+            private let callback: (Action, Animation?, String, Int) -> Void
 
-            init(_ callback: @escaping (Action, Animation?) -> Void) {
+            init(_ callback: @escaping (Action, Animation?, String, Int) -> Void) {
                 self.callback = callback
             }
 
-            public func callAsFunction(_ action: Action) {
-                callback(action, nil)
+            public func callAsFunction(_ action: Action, file: String = #fileID, line: Int = #line) {
+                callback(action, nil, file, line)
             }
 
-            public func callAsFunction(_ action: Action, _ animation: Animation?) {
-                callback(action, animation)
+            public func callAsFunction(
+                _ action: Action,
+                _ animation: Animation?,
+                file: String = #fileID,
+                line: Int = #line
+            ) {
+                callback(action, animation, file, line)
             }
         }
 
@@ -211,18 +216,23 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     
     nonisolated public let id = UUID()
     nonisolated(unsafe) public var name: String
-    private var nestedLevel = 0
-    
+    var nestedLevel = 0
+
     public var environment: Environment?
     private let taskManager = TaskManager()
-    
+
     public var children: [String: any BasicViewModel] = [:]
 
     public var logConfig = LogConfig()
     internal var logger: Logger {
         logConfig.logger
     }
-    private var codeStringSnapshots: [ReducerSnapshotData] = []
+    /// In-memory recorder for the store's current trace segment.
+    ///
+    /// The recorder is created on first traced action/effect, reused across subsequent sends so
+    /// they end up in one graph, and reset only after an explicit save. Deallocation also drains
+    /// its contents to disk when `logConfig.saveSessionTrace` is enabled.
+    var sessionGraphRecorder: SessionGraphRecorder?
 
     @Published public private(set) var state: State
     public private(set) var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
@@ -236,6 +246,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 
     public init(_ initialValue: State, env: Environment?) {
         self.name = Self.storeDefaultKey
+        self.sessionGraphRecorder = nil
         self.state = initialValue
         self.environment = env
 
@@ -249,6 +260,14 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     }
     
     deinit {
+        sessionTraceHandleDeinit(
+            recorder: sessionGraphRecorder,
+            saveSessionTrace: logConfig.saveSessionTrace,
+            logger: logConfig.logger,
+            sessionTraceFilename: logConfig.sessionTraceFilename,
+            storeName: name
+        )
+
         if storeLifecycleLog.enabled {
             let name = Self.storeDefaultKey
             if storeLifecycleLog.debug {
@@ -261,7 +280,11 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     private static func consumeActions<Element>(
         from stream: AsyncStream<Element>,
         storeProvider: @escaping () -> StateStore?,
-        mapToAction: (Element) -> (Action, Animation?)
+        mapToAction: (Element) -> (Action, Animation?),
+        callSite: ((Element) -> (String?, Int?))? = nil,
+        effectID: SessionGraph.EffectID? = nil,
+        animationGroupID: String? = nil,
+        containingBatchID: SessionGraph.BatchID? = nil
     ) async {
         await withTaskGroup(of: Void.self) { group in
             for await element in stream {
@@ -269,7 +292,18 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 guard let store = storeProvider() else { return }
                 guard !store.isCancelled else { return }
                 let (action, anim) = mapToAction(element)
-                if let task = store.send(.code(action), anim) {
+                let (file, line) = callSite?(element) ?? (nil, nil)
+                if let task = store.send(
+                    .code(action),
+                    anim,
+                    trace: store.sessionTraceContextForEffectAction(
+                        effectID: effectID,
+                        animationGroupID: animationGroupID,
+                        containingBatchID: containingBatchID
+                    ),
+                    file: file,
+                    line: line
+                ) {
                     group.addTask {
                         await task.value
                     }
@@ -281,13 +315,23 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     private static func runAsyncAction(
         _ asyncAction: () async -> Action,
         animation: Animation?,
-        storeProvider: @escaping () -> StateStore?
+        storeProvider: @escaping () -> StateStore?,
+        effectID: SessionGraph.EffectID? = nil,
+        animationGroupID: String? = nil
     ) async {
         let action = await asyncAction()
         guard !Task.isCancelled else { return }
         guard let store = storeProvider() else { return }
         guard !store.isCancelled else { return }
-        if let task = store.send(.code(action), animation) {
+        if let task = store.send(
+            .code(action),
+            animation,
+            trace: store.sessionTraceContextForEffectAction(
+                effectID: effectID,
+                animationGroupID: animationGroupID,
+                containingBatchID: nil
+            )
+        ) {
             await task.value
         }
     }
@@ -297,13 +341,17 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         cancellingPreviousWithKey key: String? = nil,
         animation: Animation?,
         asyncAction: @escaping () async -> Action,
-        storeProvider: @escaping () -> StateStore?
+        storeProvider: @escaping () -> StateStore?,
+        effectID: SessionGraph.EffectID? = nil,
+        animationGroupID: String? = nil
     ) -> Task<Void, Never> {
         taskManager.addTask(cancellingPreviousWithKey: key) {
             await runAsyncAction(
                 asyncAction,
                 animation: animation,
-                storeProvider: storeProvider
+                storeProvider: storeProvider,
+                effectID: effectID,
+                animationGroupID: animationGroupID
             )
         }
     }
@@ -312,16 +360,19 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         taskManager: TaskManager,
         cancellingPreviousWithKey key: String? = nil,
         asyncActionSequence: @escaping (_ callback: Effect.AsyncActionCallback) async -> Void,
-        storeProvider: @escaping () -> StateStore?
+        storeProvider: @escaping () -> StateStore?,
+        effectID: SessionGraph.EffectID? = nil,
+        animationGroupID: String? = nil,
+        containingBatchID: SessionGraph.BatchID? = nil
     ) -> Task<Void, Never> {
-        let (stream, continuation) = AsyncStream<(Action, Animation?)>.makeStream()
+        let (stream, continuation) = AsyncStream<(Action, Animation?, String, Int)>.makeStream()
 
         let producer = taskManager.addTask(cancellingPreviousWithKey: key.map { "\($0)-producer" }) {
             await withTaskCancellationHandler(
                 operation: {
-                    let callback = Effect.AsyncActionCallback { action, anim in
+                    let callback = Effect.AsyncActionCallback { action, anim, file, line in
                         guard !Task.isCancelled else { return }
-                        continuation.yield((action, anim))
+                        continuation.yield((action, anim, file, line))
                     }
                     await asyncActionSequence(callback)
                     continuation.finish()
@@ -336,9 +387,15 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             await consumeActions(
                 from: stream,
                 storeProvider: storeProvider,
-                mapToAction: { action, anim in
+                mapToAction: { action, anim, _, _ in
                     (action, anim)
-                }
+                },
+                callSite: { _, _, file, line in
+                    (file, line)
+                },
+                effectID: effectID,
+                animationGroupID: animationGroupID,
+                containingBatchID: containingBatchID
             )
         }
 
@@ -350,13 +407,65 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 
     @discardableResult
     public func addEffect(_ effect: Effect) -> Task<Void, Never>? {
+        addEffect(
+            effect,
+            trace: .init(
+                startedByActionID: nil,
+                inheritedAnimationGroupID: nil
+            )
+        )
+    }
+
+    @discardableResult
+    fileprivate func addEffect(
+        _ effect: Effect,
+        trace: SessionTraceEffectContext,
+        file: String? = nil,
+        line: Int? = nil,
+        dispatchingSyncEffect: Bool = false
+    ) -> Task<Void, Never>? {
+        let effectTrace = beginSessionTraceEffectIfNeeded(
+            effect,
+            trace: trace,
+            dispatchingSyncEffect: dispatchingSyncEffect
+        )
         switch effect {
         case let .action(action, anim):
-            return send(.code(action), anim)
+            let traceParameters = sessionTraceParametersForEffectAction(
+                dispatchingSyncEffect: dispatchingSyncEffect,
+                trace: trace,
+                effectID: effectTrace.effectID,
+                animationGroupID: effectTrace.animationGroupID,
+                file: file,
+                line: line,
+                containingBatchID: nil
+            )
+            return send(
+                .code(action),
+                anim,
+                trace: traceParameters.trace,
+                file: traceParameters.file,
+                line: traceParameters.line
+            )
 
         case let .actions(actions, anim):
+            let traceParameters = sessionTraceBatchParametersForEffectActions(
+                dispatchingSyncEffect: dispatchingSyncEffect,
+                trace: trace,
+                effectID: effectTrace.effectID,
+                animationGroupID: effectTrace.animationGroupID,
+                actionCount: actions.count,
+                file: file,
+                line: line
+            )
             let tasks = actions.compactMap { action in
-                send(.code(action), anim)
+                send(
+                    .code(action),
+                    anim,
+                    trace: traceParameters.trace,
+                    file: traceParameters.file,
+                    line: traceParameters.line
+                )
             }
             if tasks.isEmpty {
                 return nil
@@ -370,31 +479,59 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             }
 
         case let .asyncAction(anim, f):
+            if dispatchingSyncEffect {
+                assertionFailure()
+            }
             return Self.addAsyncActionTask(
                 taskManager: taskManager,
                 animation: anim,
                 asyncAction: f,
-                storeProvider: { [weak self] in self }
+                storeProvider: { [weak self] in self },
+                effectID: effectTrace.effectID,
+                animationGroupID: effectTrace.animationGroupID
             )
 
         case let .asyncActionLatest(key, anim, f):
+            if dispatchingSyncEffect {
+                assertionFailure()
+            }
             return Self.addAsyncActionTask(
                 taskManager: taskManager,
                 cancellingPreviousWithKey: key,
                 animation: anim,
                 asyncAction: f,
-                storeProvider: { [weak self] in self }
+                storeProvider: { [weak self] in self },
+                effectID: effectTrace.effectID,
+                animationGroupID: effectTrace.animationGroupID
             )
 
         case .asyncActions(let anim, let f):
+            if dispatchingSyncEffect {
+                assertionFailure()
+            }
             return taskManager.addTask { [weak self] in
                 let actions = await f()
+                let traceParameters: SessionTraceSendContext
+                do { // capture store temporarily to get trace parameters
+                    guard let store = self else { return }
+                    guard !store.isCancelled else { return }
+                    traceParameters = store.sessionTraceParametersForAsyncEffectActions(
+                        effectID: effectTrace.effectID,
+                        animationGroupID: effectTrace.animationGroupID,
+                        actionCount: actions.count
+                    )
+                }
+
                 await withTaskGroup(of: Void.self) { group in
                     for action in actions {
                         guard !Task.isCancelled else { return }
                         guard let self else { return }
                         guard !self.isCancelled else { return }
-                        if let task = self.send(.code(action), anim) {
+                        if let task = self.send(
+                            .code(action),
+                            anim,
+                            trace: traceParameters
+                        ) {
                             group.addTask {
                                 await task.value
                             }
@@ -404,21 +541,34 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             }
 
         case .asyncActionSequence(let f):
+            if dispatchingSyncEffect {
+                assertionFailure()
+            }
             return Self.addAsyncActionSequenceTask(
                 taskManager: taskManager,
                 asyncActionSequence: f,
-                storeProvider: { [weak self] in self }
+                storeProvider: { [weak self] in self },
+                effectID: effectTrace.effectID,
+                animationGroupID: effectTrace.animationGroupID
             )
 
         case let .asyncActionSequenceLatest(key, f):
+            if dispatchingSyncEffect {
+                assertionFailure()
+            }
             return Self.addAsyncActionSequenceTask(
                 taskManager: taskManager,
                 cancellingPreviousWithKey: key,
                 asyncActionSequence: f,
-                storeProvider: { [weak self] in self }
+                storeProvider: { [weak self] in self },
+                effectID: effectTrace.effectID,
+                animationGroupID: effectTrace.animationGroupID
             )
 
         case let .publisher(publisher, anim):
+            if dispatchingSyncEffect {
+                assertionFailure()
+            }
             let (stream, continuation) = AsyncStream<Action>.makeStream()
             return taskManager.addTask { [weak self] in
                 let cancellable = publisher.sink(
@@ -435,7 +585,9 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                         await Self.consumeActions(
                             from: stream,
                             storeProvider: { [weak self] in self },
-                            mapToAction: { ($0, anim) }
+                            mapToAction: { ($0, anim) },
+                            effectID: effectTrace.effectID,
+                            animationGroupID: effectTrace.animationGroupID
                         )
                         cancellable.cancel()
                     },
@@ -445,7 +597,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                     }
                 )
             }
-            
+
         case .none:
             return nil
         }
@@ -453,10 +605,22 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 
     @discardableResult
     public func send(_ action: Action, _ anim: Animation? = nil, file: String = #fileID, line: Int = #line) -> Task<Void, Never>? {
-        send(.user(action), anim, file: file, line: line)
+        send(
+            .user(action),
+            anim,
+            trace: .user,
+            file: file,
+            line: line
+        )
     }
-    
-    private func send(_ storeAction: StoreAction, _ anim: Animation?, file: String = #fileID, line: Int = #line) -> Task<Void, Never>? {
+
+    private func send(
+        _ storeAction: StoreAction,
+        _ anim: Animation?,
+        trace: SessionTraceSendContext = .system,
+        file: String? = #fileID,
+        line: Int? = #line
+    ) -> Task<Void, Never>? {
         apply(anim) { () -> Task<Void, Never>? in
             guard !isCancelled else {
                 switch storeAction.action {
@@ -494,7 +658,9 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             }
 
             var reducerInput = ""
-            if logConfig.logActionCallSite {
+            if logConfig.logActionCallSite,
+               let file,
+               let line {
                 reducerInput.append("\nfile: \(file), line: \(line)")
             }
             if logConfig.logActions {
@@ -507,32 +673,35 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 logger.debug("\(reducerInput)")
             }
 
-            if logConfig.saveSnapshots {
-                let snapshot: Snapshot = Snapshot.Input(date: .now, action: storeAction, state: state, nestedLevel: nestedLevel).snapshot
-                codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
+            let actionTrace = beginSessionTraceActionIfNeeded(
+                storeAction: storeAction,
+                animation: anim,
+                trace: trace,
+                file: file,
+                line: line
+            )
+            var effect: Effect? = nil
+            var syncEffect: SyncEffect? = nil
+            defer {
+                finishSessionTraceActionIfNeeded(actionTrace, outputEffect: effect)
             }
-
-            let effect: Effect?
-            let syncEffect: SyncEffect?
             switch storeAction.action {
             case .mutating(let mutatingAction, let animate, let animation):
                 if animate {
-                    syncEffect = withAnimation(animation ?? .default) { Nsp.reduce(&state, mutatingAction) }
+                    syncEffect = withAnimation(animation ?? .default) {
+                        Nsp.reduce(&state, mutatingAction)
+                    }
                 }
                 else {
                     syncEffect = Nsp.reduce(&state, mutatingAction)
                 }
                 effect = syncEffect.map { .init($0) }
+                recordSessionTraceMutationIfNeeded(actionTrace)
 
                 if logConfig.logState {
                     var reducerStateChange = "\n<-"
                     reducerStateChange.append("\n\(codeString(state))")
                     logger.debug("\(reducerStateChange)")
-                }
-
-                if logConfig.saveSnapshots {
-                    let snapshot = Snapshot.StateChange(date: .now, state: state, nestedLevel: nestedLevel).snapshot
-                    codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
                 }
 
             case .effect(let effectAction):
@@ -557,6 +726,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 _cancel()
                 isCancelled = true
                 taskManager.cancelAllTasks()
+                cancelAllActiveSessionTraceEffectsIfNeeded(actionTrace)
                 syncEffect = nil
                 effect = nil
                 environment = nil
@@ -584,21 +754,17 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 reducerOutput.append("\n\(codeString(effect))")
                 logger.debug("\(reducerOutput)")
             }
-
-            if logConfig.saveSnapshots {
-                let snapshot = Snapshot.Output(
-                    date: Date.now,
-                    effect: effect,
-                    syncEffect: syncEffect,
-                    state: state,
-                    nestedLevel: nestedLevel
-                )
-                .snapshot
-                codeStringSnapshots.append(snapshot.logData(errorLogger: logger))
-            }
-
             if let e = effect {
-                return addEffect(e)
+                return addEffect(
+                    e,
+                    trace: .init(
+                        startedByActionID: actionTrace.actionID,
+                        inheritedAnimationGroupID: actionTrace.animationGroupID
+                    ),
+                    file: file,
+                    line: line,
+                    dispatchingSyncEffect: syncEffect != nil
+                )
             }
             else {
                 return nil
@@ -722,8 +888,38 @@ extension StateStore {
         public var logState = false
         public var logActions = false
         public var logActionCallSite = false
-        public var saveSnapshots = false
-        public var snapshotsFilename: String? = nil
+        /// Enables trace persistence for this store.
+        ///
+        /// When `true`, the runtime also enables graph capture and keeps appending traced actions,
+        /// effects, mutations, and state transitions into `sessionGraphRecorder`. The buffered
+        /// graph is written by `saveSessionTraceIfNeeded()` and, if still present, again during
+        /// store deallocation. Manual saves reset the recorder so later events start a new trace
+        /// segment.
+        public var saveSessionTrace = false {
+            didSet {
+                enforceSessionTraceInvariants()
+            }
+        }
+        /// Overrides the title and filename stem used for persisted trace files.
+        ///
+        /// This value affects only persistence metadata; it does not change store ids or node ids
+        /// inside the graph. Setting a non-`nil` value also enables `saveSessionTrace`, so the
+        /// current recorder contents will be eligible for manual save and deinit save behavior.
+        public var sessionTraceFilename: String? = nil {
+            didSet {
+                enforceSessionTraceInvariants()
+            }
+        }
+        /// Enables in-memory session graph capture without requiring persistence.
+        ///
+        /// This is useful for tests and tooling that inspect `sessionGraphRecorder` directly. If
+        /// `saveSessionTrace` is later enabled, this flag is kept on automatically because saving
+        /// depends on having the graph in memory first.
+        public var captureSessionGraph = false {
+            didSet {
+                enforceSessionTraceInvariants()
+            }
+        }
 
         public var logEnabled: Bool {
             logState || logActions || logActionCallSite
@@ -731,6 +927,7 @@ extension StateStore {
 
         internal var logger: Logger
         public var logUserActions: ((_ actionName: String, _ actionDetails: String?) -> Void)?
+        var enforcingSessionTraceInvariants = false
 
         public init(
             logState: Bool = false,
@@ -745,108 +942,12 @@ extension StateStore {
         }
     }
 
-    public enum Snapshot {
-        public struct Input {
-            let date: Date
-            let action: StoreAction
-            let state: State
-            let nestedLevel: Int
-
-            var snapshot: Snapshot {
-                .input(self)
-            }
-
-            var isFromUser: Bool {
-                action.isFromUser
-            }
-        }
-
-        public struct StateChange {
-            let date: Date
-            let state: State
-            let nestedLevel: Int
-
-            var snapshot: Snapshot {
-                .stateChange(self)
-            }
-        }
-
-        public struct Output {
-            let date: Date
-            let effect: Effect?
-            let syncEffect: SyncEffect?
-            let state: State
-            let nestedLevel: Int
-
-            var snapshot: Snapshot {
-                .output(self)
-            }
-        }
-
-        case input(Input)
-        case stateChange(StateChange)
-        case output(Output)
-
-        public func logData(errorLogger logger: Logger) -> ReducerSnapshotData {
-            switch self {
-            case .input(let input):
-                return ReducerSnapshotData.Input(
-                    date: input.date,
-                    action: codeString(input.action),
-                    state: propertyCodeStrings(input.state),
-                    nestedLevel: input.nestedLevel
-                )
-                .snapshotData
-
-            case .stateChange(let stateChange):
-                return ReducerSnapshotData.StateChange(
-                    date: stateChange.date,
-                    state: propertyCodeStrings(stateChange.state),
-                    nestedLevel: stateChange.nestedLevel
-                )
-                .snapshotData
-
-            case .output(let output):
-                return ReducerSnapshotData.Output(
-                    date: output.date,
-                    effect: codeString(output.effect),
-                    state: propertyCodeStrings(output.state),
-                    nestedLevel: output.nestedLevel
-                )
-                .snapshotData
-            }
-        }
-
-        public var isFromUser: Bool {
-            switch self {
-            case .input(let input):
-                return input.isFromUser
-            default:
-                return false
-            }
-        }
-    }
-
-    private func clearSnapshots() {
-        codeStringSnapshots = []
-    }
-
     @MainActor
-    public func saveSnapshotsIfNeeded() {
-        guard logConfig.saveSnapshots else { return }
-        let title = logConfig.snapshotsFilename ?? name
-        let snapshotCollection = ReducerSnapshotCollection(title: title, snapshots: codeStringSnapshots)
-        do {
-            if let path = try snapshotCollection.save() {
-                logger.info("Saved reducer snapshots to \n\(path)")
-                clearSnapshots()
-            }
-            else {
-                logger.error("Failed to save snapshots.")
-            }
-        }
-        catch {
-            logger.error(message: "Failed to save snapshots.", error)
-        }
+    /// Persists the currently buffered trace graph, if one exists.
+    ///
+    /// This is a no-op when `logConfig.saveSessionTrace` is disabled or no events have been
+    /// recorded yet. On success, the recorder is reset so later traced events begin a fresh graph.
+    public func saveSessionTraceIfNeeded() {
+        saveSessionTraceIfNeededImpl()
     }
 }

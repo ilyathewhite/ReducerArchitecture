@@ -334,33 +334,72 @@ extension StateStoreTests.StateStoreAdvancedTests {
     }
 }
 
-extension SnapshotTests {
-    @Suite @MainActor struct StateStoreSnapshotPersistenceTests {}
+extension SessionTraceTests {
+    @Suite @MainActor struct StateStoreSessionTracePersistenceTests {}
 }
 
-extension SnapshotTests.StateStoreSnapshotPersistenceTests {
+extension SessionTraceTests.StateStoreSessionTracePersistenceTests {
     // Save snapshots after mutations.
     // Expect latest state is persisted.
     @Test
-    func saveSnapshotsIfNeededWritesLatestActionState() throws {
+    func saveSessionTraceIfNeededWritesLatestActionState() throws {
         // Set up snapshot file and store logging.
         let title = "store-snapshots-\(UUID().uuidString)"
-        let fileURL = try stateStoreSnapshotFileURL(title: title)
+        let fileURL = try stateStoreSessionTraceFileURL(title: title)
         defer { try? FileManager.default.removeItem(at: fileURL) }
         let store = EffectHarnessNsp.store()
-        store.logConfig.saveSnapshots = true
-        store.logConfig.snapshotsFilename = title
+        store.logConfig.saveSessionTrace = true
+        store.logConfig.sessionTraceFilename = title
 
         // Trigger mutations and save snapshots.
         store.send(.mutating(.append(1)))
-        store.saveSnapshotsIfNeeded()
+        store.saveSessionTraceIfNeeded()
         store.send(.mutating(.append(2)))
-        store.saveSnapshotsIfNeeded()
-        let collection = try ReducerSnapshotCollection.load(from: fileURL)
+        store.saveSessionTraceIfNeeded()
+        let collection = try SessionTraceCollection.load(from: fileURL)
 
         // Expect snapshot count and latest values.
-        #expect(collection.snapshots.count == 3)
+        #expect(actionNodes(in: collection).count == 1)
         #expect(lastValuesStateString(in: collection) == "[1, 2]")
+    }
+
+    // Drop store with snapshot persistence enabled.
+    // Expect deinit auto-saves latest traced state.
+    @Test
+    func deinitAutoSavesSessionTraceWhenEnabled() async throws {
+        let title = "store-snapshots-deinit-\(UUID().uuidString)"
+        let fileURL = try stateStoreSessionTraceFileURL(title: title)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        weak var weakStore: EffectHarnessNsp.Store?
+
+        do {
+            let store = EffectHarnessNsp.store()
+            weakStore = store
+            store.logConfig.saveSessionTrace = true
+            store.logConfig.sessionTraceFilename = title
+            store.send(.mutating(.append(7)))
+            store.send(.mutating(.append(8)))
+        }
+        await Task.yield()
+
+        #expect(weakStore == nil)
+        #expect(try await waitForFileToExist(at: fileURL))
+
+        let collection = try SessionTraceCollection.load(from: fileURL)
+        #expect(actionNodes(in: collection).count == 2)
+        #expect(lastValuesStateString(in: collection) == "[7, 8]")
+    }
+
+    private func waitForFileToExist(
+        at url: URL
+    ) async throws -> Bool {
+        for _ in 0..<50 {
+            if FileManager.default.fileExists(atPath: url.path) {
+                return true
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        return false
     }
 }
 
@@ -400,7 +439,7 @@ extension LifecycleTests.StateStoreLifecycleTests {
     }
 }
 
-private func stateStoreSnapshotFileURL(title: String) throws -> URL {
+private func stateStoreSessionTraceFileURL(title: String) throws -> URL {
     let root = try FileManager.default.url(
         for: .cachesDirectory,
         in: .userDomainMask,
@@ -413,21 +452,21 @@ private func stateStoreSnapshotFileURL(title: String) throws -> URL {
         .appendingPathExtension("lzma")
 }
 
-private func lastValuesStateString(in collection: ReducerSnapshotCollection) -> String? {
-    for snapshot in collection.snapshots.reversed() {
-        switch snapshot {
-        case .input(let input):
-            if let value = input.state.first(where: { $0.property == "values" })?.value {
-                return value
-            }
-        case .stateChange(let stateChange):
-            if let value = stateChange.state.first(where: { $0.property == "values" })?.value {
-                return value
-            }
-        case .output(let output):
-            if let value = output.state.first(where: { $0.property == "values" })?.value {
-                return value
-            }
+private func actionNodes(in collection: SessionTraceCollection) -> [SessionGraph.ActionNode] {
+    collection.sessionGraph.nodes.compactMap { node -> SessionGraph.ActionNode? in
+        guard case .action(let actionNode) = node else { return nil }
+        return actionNode
+    }
+    .sorted(by: { $0.order < $1.order })
+}
+
+private func lastValuesStateString(in collection: SessionTraceCollection) -> String? {
+    for actionNode in actionNodes(in: collection).reversed() {
+        if let value = actionNode.stateAfter?.first(where: { $0.property == "values" })?.value {
+            return value
+        }
+        if let value = actionNode.stateBefore.first(where: { $0.property == "values" })?.value {
+            return value
         }
     }
     return nil

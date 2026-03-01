@@ -207,42 +207,6 @@ extension StateStoreTests.StateStoreCoverageGapTests {
         #expect(!code.isFromUser)
     }
 
-    // Build snapshots from user and code actions.
-    // Expect isFromUser only for user input snapshots.
-    @Test
-    func snapshotInputAndWrapperExposeUserOrigin() {
-        // Set up snapshot payloads.
-        let userInput = NestedTaskGapNsp.Store.Snapshot.Input(
-            date: .now,
-            action: .user(.none),
-            state: .init(),
-            nestedLevel: 0
-        )
-        let codeInput = NestedTaskGapNsp.Store.Snapshot.Input(
-            date: .now,
-            action: .code(.none),
-            state: .init(),
-            nestedLevel: 0
-        )
-        let stateChange = NestedTaskGapNsp.Store.Snapshot.StateChange(
-            date: .now,
-            state: .init(values: [1]),
-            nestedLevel: 0
-        )
-
-        // Trigger wrapper checks.
-        let userSnapshot = NestedTaskGapNsp.Store.Snapshot.input(userInput)
-        let codeSnapshot = NestedTaskGapNsp.Store.Snapshot.input(codeInput)
-        let stateChangeSnapshot = NestedTaskGapNsp.Store.Snapshot.stateChange(stateChange)
-
-        // Expect user origin only for user inputs.
-        #expect(userInput.isFromUser)
-        #expect(!codeInput.isFromUser)
-        #expect(userSnapshot.isFromUser)
-        #expect(!codeSnapshot.isFromUser)
-        #expect(!stateChangeSnapshot.isFromUser)
-    }
-
     // Query AnyStore children by key.
     // Expect only AnyStore children are returned.
     @Test
@@ -262,6 +226,46 @@ extension StateStoreTests.StateStoreCoverageGapTests {
         // Expect only store child survives casting.
         #expect(anyStoreChild === storeChild)
         #expect(nonStoreChild == nil)
+    }
+
+    // Enable trace persistence.
+    // Expect graph capture is enabled automatically.
+    @Test
+    func enablingSaveSessionTraceEnablesCaptureSessionGraph() {
+        var logConfig = NestedTaskGapNsp.Store.LogConfig()
+
+        logConfig.saveSessionTrace = true
+
+        #expect(logConfig.saveSessionTrace)
+        #expect(logConfig.captureSessionGraph)
+    }
+
+    // Set trace filename.
+    // Expect save and graph capture are enabled automatically.
+    @Test
+    func settingSessionTraceFilenameEnablesSaveAndCapture() {
+        var logConfig = NestedTaskGapNsp.Store.LogConfig()
+
+        logConfig.sessionTraceFilename = "trace-file"
+
+        #expect(logConfig.sessionTraceFilename == "trace-file")
+        #expect(logConfig.saveSessionTrace)
+        #expect(logConfig.captureSessionGraph)
+    }
+
+    // With trace filename configured.
+    // Expect save/capture cannot be disabled.
+    @Test
+    func sessionTraceFilenameKeepsSaveAndCaptureEnabled() {
+        var logConfig = NestedTaskGapNsp.Store.LogConfig()
+
+        logConfig.sessionTraceFilename = "trace-file"
+        logConfig.saveSessionTrace = false
+        logConfig.captureSessionGraph = false
+
+        #expect(logConfig.sessionTraceFilename == "trace-file")
+        #expect(logConfig.saveSessionTrace)
+        #expect(logConfig.captureSessionGraph)
     }
 
     // MARK: - Effect Execution
@@ -476,7 +480,7 @@ extension StateStoreTests.StateStoreCoverageGapTests {
     func asyncActionCallbackCallAsFunctionPropagatesAnimation() {
         // Set up callback capture.
         var captured: [(value: Int, hasAnimation: Bool)] = []
-        let callback = NestedTaskGapNsp.Store.Effect.AsyncActionCallback { action, animation in
+        let callback = NestedTaskGapNsp.Store.Effect.AsyncActionCallback { action, animation, _, _ in
             guard case .mutating(.append(let value), _, _) = action else { return }
             captured.append((value: value, hasAnimation: animation != nil))
         }
