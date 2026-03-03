@@ -228,6 +228,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     /// they end up in one graph, and reset only after an explicit save. Deallocation also drains
     /// its contents to disk when `logConfig.saveSessionTrace` is enabled.
     var sessionGraphRecorder: SessionGraphRecorder?
+    var sessionTraceLiveClient: SessionTraceLiveClient?
 
     @Published public private(set) var state: State
     public private(set) var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
@@ -242,6 +243,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     public init(_ initialValue: State, env: Environment?) {
         self.name = Self.storeDefaultKey
         self.sessionGraphRecorder = nil
+        self.sessionTraceLiveClient = nil
         self.state = initialValue
         self.environment = env
 
@@ -255,6 +257,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     }
     
     deinit {
+        sessionTraceLiveClient?.endSession()
         sessionTraceHandleDeinit(
             recorder: sessionGraphRecorder,
             saveSessionTrace: logConfig.saveSessionTrace,
@@ -617,6 +620,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         line: Int? = #line
     ) -> Task<Void, Never>? {
         apply(anim) { () -> Task<Void, Never>? in
+            sessionTraceSyncLiveClientIfNeeded()
             guard !isCancelled else {
                 switch storeAction.action {
                 case .cancel:
@@ -911,6 +915,12 @@ extension StateStore {
         /// `saveSessionTrace` is later enabled, this flag is kept on automatically because saving
         /// depends on having the graph in memory first.
         public var captureSessionGraph = false {
+            didSet {
+                enforceSessionTraceInvariants()
+            }
+        }
+        /// Streams live trace updates to a remote viewer while keeping the in-memory graph active.
+        public var liveTrace: SessionTraceLiveConfig? = nil {
             didSet {
                 enforceSessionTraceInvariants()
             }

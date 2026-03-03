@@ -521,6 +521,7 @@ public struct SessionGraph: Codable, Equatable {
 final class SessionGraphRecorder {
     /// The store-instance id used as the prefix for every generated node and animation-group id.
     let storeInstanceID: SessionGraph.StoreInstanceID
+    var livePatchHandler: ((SessionTraceLivePatch) -> Void)?
 
     private var nodes: [SessionGraph.Node] = []
     private var edges: [SessionGraph.Edge] = []
@@ -601,11 +602,11 @@ final class SessionGraphRecorder {
             stateAfter: nil,
             outputEffect: nil
         )
-        nodes.append(.action(node))
+        appendNode(.action(node))
         actionNodeIndexByID[actionID] = nodes.endIndex - 1
 
         if let parentActionID = actionStack.last {
-            edges.append(
+            appendEdge(
                 .nested(
                     .init(
                         order: makeOrder(),
@@ -617,7 +618,7 @@ final class SessionGraphRecorder {
         }
 
         if let containingBatchID {
-            edges.append(
+            appendEdge(
                 .contains(
                     .init(
                         order: makeOrder(),
@@ -633,7 +634,7 @@ final class SessionGraphRecorder {
         case .effect(let effectID):
             incrementEmittedActionCount(for: effectID)
             if containingBatchID == nil {
-                edges.append(
+                appendEdge(
                     .emittedAction(
                         .init(
                             order: makeOrder(),
@@ -647,7 +648,7 @@ final class SessionGraphRecorder {
 
         case .action(let parentActionID):
             if containingBatchID == nil {
-                edges.append(
+                appendEdge(
                     .producedAction(
                         .init(
                             order: makeOrder(),
@@ -679,7 +680,7 @@ final class SessionGraphRecorder {
             actionNode.completedAt = completedAt
             actionNode.stateAfter = stateAfter
             actionNode.outputEffect = outputEffect
-            nodes[nodeIndex] = .action(actionNode)
+            updateNode(.action(actionNode), at: nodeIndex)
         }
         guard let stackIndex = actionStack.lastIndex(of: actionID) else {
             return
@@ -705,8 +706,8 @@ final class SessionGraphRecorder {
             after: after,
             propertyDiff: Self.propertyDiff(before: before, after: after)
         )
-        nodes.append(.mutation(node))
-        edges.append(
+        appendNode(.mutation(node))
+        appendEdge(
             .applied(
                 .init(
                     order: makeOrder(),
@@ -732,7 +733,7 @@ final class SessionGraphRecorder {
             return
         }
 
-        edges.append(
+        appendEdge(
             .stateInput(
                 .init(
                     order: makeOrder(),
@@ -746,7 +747,7 @@ final class SessionGraphRecorder {
             capturedAt: appliedAt,
             state: stateAfter
         )
-        edges.append(
+        appendEdge(
             .stateResult(
                 .init(
                     order: makeOrder(),
@@ -785,11 +786,11 @@ final class SessionGraphRecorder {
             lifecycle: .started,
             endOrder: nil
         )
-        nodes.append(.effect(node))
+        appendNode(.effect(node))
         effectNodeIndexByID[effectID] = nodes.endIndex - 1
 
         if let startedByActionID {
-            edges.append(
+            appendEdge(
                 .startedEffect(
                     .init(
                         order: makeOrder(),
@@ -824,10 +825,10 @@ final class SessionGraphRecorder {
             nestedLevel: nestedLevel,
             animationGroupID: animationGroupID
         )
-        nodes.append(.batch(node))
+        appendNode(.batch(node))
 
         if let parentActionID = actionStack.last {
-            edges.append(
+            appendEdge(
                 .nested(
                     .init(
                         order: makeOrder(),
@@ -839,7 +840,7 @@ final class SessionGraphRecorder {
         }
 
         if let producedByActionID {
-            edges.append(
+            appendEdge(
                 .producedAction(
                     .init(
                         order: makeOrder(),
@@ -852,7 +853,7 @@ final class SessionGraphRecorder {
         }
 
         if let emittedByEffectID {
-            edges.append(
+            appendEdge(
                 .emittedAction(
                     .init(
                         order: makeOrder(),
@@ -880,7 +881,7 @@ final class SessionGraphRecorder {
 
         effectNode.lifecycle = cancelled ? .cancelled : .finished
         effectNode.endOrder = makeOrder()
-        nodes[nodeIndex] = .effect(effectNode)
+        updateNode(.effect(effectNode), at: nodeIndex)
 
         if let key = effectNode.cancellationKey, latestEffectByKey[key] == effectID {
             latestEffectByKey.removeValue(forKey: key)
@@ -942,7 +943,7 @@ final class SessionGraphRecorder {
             return
         }
         effectNode.emittedActionCount += 1
-        nodes[nodeIndex] = .effect(effectNode)
+        updateNode(.effect(effectNode), at: nodeIndex)
     }
 
     private func nextContainsIndex(for batchID: SessionGraph.BatchID) -> Int {
@@ -1027,6 +1028,21 @@ final class SessionGraphRecorder {
         lhs.order < rhs.order
     }
 
+    private func appendNode(_ node: SessionGraph.Node) {
+        nodes.append(node)
+        livePatchHandler?(.upsertNode(node))
+    }
+
+    private func updateNode(_ node: SessionGraph.Node, at index: Int) {
+        nodes[index] = node
+        livePatchHandler?(.upsertNode(node))
+    }
+
+    private func appendEdge(_ edge: SessionGraph.Edge) {
+        edges.append(edge)
+        livePatchHandler?(.appendEdge(edge))
+    }
+
     private func ensureInitialStateNodeIfNeeded(
         capturedAt: Date,
         state: [CodePropertyValuePair]
@@ -1050,7 +1066,7 @@ final class SessionGraphRecorder {
             capturedAt: capturedAt,
             state: state
         )
-        nodes.append(.state(node))
+        appendNode(.state(node))
         latestStateNodeID = stateID
         return stateID
     }
