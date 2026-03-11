@@ -18,35 +18,34 @@ private func nextSessionTraceStoreInstanceID(storeDefaultKey: String) -> Session
     return .init(rawValue: "\(storeDefaultKey).s\(sessionTraceStoreInstanceCounter)")
 }
 
-/// Persists the latest captured session trace when a store is deallocated.
-func sessionTraceHandleDeinit(
-    recorder: SessionGraphRecorder?,
-    saveSessionTrace: Bool,
-    logger: Logger,
-    sessionTraceFilename: String?,
-    storeName: String
-) {
-    guard saveSessionTrace else { return }
+final class SessionTraceLiveHandler: @unchecked Sendable {
+    private let metadata: SessionTraceLiveSessionMetadata
+    private let handler: @Sendable (SessionTraceLiveEnvelope) -> Void
+    private var hasEnded = false
 
-    let title = sessionTraceFilename ?? storeName
-    Task { @MainActor in
-        guard let sessionGraph = recorder?.graph() else { return }
+    init(
+        metadata: SessionTraceLiveSessionMetadata,
+        handler: @escaping @Sendable (SessionTraceLiveEnvelope) -> Void
+    ) {
+        self.metadata = metadata
+        self.handler = handler
+        handler(.hello(metadata))
+    }
 
-        let traceCollection = SessionTraceCollection(
-            title: title,
-            sessionGraph: sessionGraph
+    func record(_ patch: SessionTraceLivePatch) {
+        guard !hasEnded else { return }
+        handler(
+            .patch(
+                sessionID: metadata.sessionID,
+                patch: patch
+            )
         )
-        do {
-            if let path = try traceCollection.save() {
-                logger.info("Saved reducer session trace to \n\(path)")
-            }
-            else {
-                logger.error("Failed to save reducer session trace.")
-            }
-        }
-        catch {
-            logger.error(message: "Failed to save reducer session trace.", error)
-        }
+    }
+
+    func endSession() {
+        guard !hasEnded else { return }
+        hasEnded = true
+        handler(.end(sessionID: metadata.sessionID))
     }
 }
 
@@ -293,9 +292,9 @@ extension StateStore {
     }
 
     @inline(__always)
-    /// Returns `true` when this store should capture a session graph.
+    /// Returns `true` when this store should trace session graph events.
     var isSessionGraphTracingEnabled: Bool {
-        logConfig.captureSessionGraph || logConfig.saveSessionTrace
+        logConfig.liveTrace != nil || logConfig.liveTraceHandler != nil
     }
 
     @inline(__always)
@@ -305,30 +304,17 @@ extension StateStore {
             return nil
         }
         let recorder = sessionGraphRecorder ?? sessionTraceEnsureRecorder()
-        sessionTraceAttachLiveClientIfNeeded(to: recorder)
+        sessionTraceAttachLiveOutputsIfNeeded(to: recorder)
         return recorder
     }
 
     func resolvedSessionTraceTitle() -> String {
-        logConfig.liveTrace?.title ?? logConfig.sessionTraceFilename ?? name
+        logConfig.liveTrace?.title ?? name
     }
 
-    func sessionTraceCollectionForLiveStreaming() -> SessionTraceCollection? {
-        guard let sessionGraph = sessionGraphRecorder?.graph() else { return nil }
-        return SessionTraceCollection(
-            title: resolvedSessionTraceTitle(),
-            sessionGraph: sessionGraph
-        )
-    }
-
-    func sessionTraceAttachLiveClientIfNeeded(to recorder: SessionGraphRecorder) {
-        guard let liveTraceConfig = logConfig.liveTrace else { return }
-
-        if let sessionTraceLiveClient {
-            recorder.livePatchHandler = { [weak sessionTraceLiveClient] patch in
-                sessionTraceLiveClient?.record(patch)
-            }
-            return
+    func sessionTraceMetadata(for recorder: SessionGraphRecorder) -> SessionTraceLiveSessionMetadata {
+        if let sessionTraceLiveMetadata {
+            return sessionTraceLiveMetadata
         }
 
         let metadata = SessionTraceLiveSessionMetadata(
@@ -339,31 +325,70 @@ extension StateStore {
             processName: ProcessInfo.processInfo.processName,
             startedAt: .now
         )
-        let client = SessionTraceLiveClient(
-            sessionID: metadata.sessionID,
-            config: liveTraceConfig,
-            metadata: metadata,
-            snapshotProvider: { [weak self] in
-                self?.sessionTraceCollectionForLiveStreaming()
-            },
-            logger: logConfig.logger
-        )
-        sessionTraceLiveClient = client
-        recorder.livePatchHandler = { [weak client] patch in
-            client?.record(patch)
+        sessionTraceLiveMetadata = metadata
+        return metadata
+    }
+
+    func sessionTraceAttachLiveOutputsIfNeeded(to recorder: SessionGraphRecorder) {
+        let metadata = sessionTraceMetadata(for: recorder)
+
+        if let liveTraceConfig = logConfig.liveTrace {
+            if sessionTraceLiveClient == nil {
+                sessionTraceLiveClient = SessionTraceLiveClient(
+                    sessionID: metadata.sessionID,
+                    config: liveTraceConfig,
+                    metadata: metadata,
+                    logger: logConfig.logger
+                )
+            }
+            recorder.setLiveClient(sessionTraceLiveClient)
+        }
+        else {
+            recorder.setLiveClient(nil)
+            sessionTraceLiveClient?.endSession()
+            sessionTraceLiveClient = nil
+        }
+
+        if let liveTraceHandler = logConfig.liveTraceHandler {
+            if sessionTraceLiveHandler == nil {
+                sessionTraceLiveHandler = SessionTraceLiveHandler(
+                    metadata: metadata,
+                    handler: liveTraceHandler
+                )
+            }
+            recorder.setLiveHandler(sessionTraceLiveHandler)
+        }
+        else {
+            recorder.setLiveHandler(nil)
+            sessionTraceLiveHandler?.endSession()
+            sessionTraceLiveHandler = nil
         }
     }
 
-    func sessionTraceSyncLiveClientIfNeeded() {
-        guard logConfig.liveTrace != nil else {
-            sessionGraphRecorder?.livePatchHandler = nil
-            sessionTraceLiveClient?.endSession()
-            sessionTraceLiveClient = nil
+    func sessionTraceSyncLiveOutputsIfNeeded() {
+        guard isSessionGraphTracingEnabled else {
+            sessionTraceClearLiveOutputsIfNeeded()
             return
         }
         if let recorder = sessionGraphRecorder {
-            sessionTraceAttachLiveClientIfNeeded(to: recorder)
+            sessionTraceAttachLiveOutputsIfNeeded(to: recorder)
         }
+    }
+
+    func sessionTraceClearLiveOutputsIfNeeded() {
+        guard sessionTraceLiveClient != nil ||
+                sessionTraceLiveHandler != nil ||
+                sessionTraceLiveMetadata != nil else {
+            return
+        }
+
+        sessionGraphRecorder?.setLiveClient(nil)
+        sessionGraphRecorder?.setLiveHandler(nil)
+        sessionTraceLiveClient?.endSession()
+        sessionTraceLiveClient = nil
+        sessionTraceLiveHandler?.endSession()
+        sessionTraceLiveHandler = nil
+        sessionTraceLiveMetadata = nil
     }
 
     static func sessionTraceEffectDescriptor(for effect: Effect) -> SessionTraceEffectDescriptor {
@@ -491,14 +516,14 @@ extension StateStore {
 
     func sessionTraceEnsureRecorder() -> SessionGraphRecorder {
         if let sessionGraphRecorder {
-            sessionTraceAttachLiveClientIfNeeded(to: sessionGraphRecorder)
+            sessionTraceAttachLiveOutputsIfNeeded(to: sessionGraphRecorder)
             return sessionGraphRecorder
         }
         let recorder = SessionGraphRecorder(
             storeInstanceID: nextSessionTraceStoreInstanceID(storeDefaultKey: Self.storeDefaultKey)
         )
         sessionGraphRecorder = recorder
-        sessionTraceAttachLiveClientIfNeeded(to: recorder)
+        sessionTraceAttachLiveOutputsIfNeeded(to: recorder)
         return recorder
     }
 
@@ -792,48 +817,5 @@ extension StateStore {
             producedByActionID: producedByActionID,
             emittedByEffectID: emittedByEffectID
         )
-    }
-
-    @MainActor
-    /// Persists the current in-memory session trace if saving is enabled.
-    func saveSessionTraceIfNeededImpl() {
-        guard logConfig.saveSessionTrace else { return }
-        guard let sessionGraph = sessionGraphRecorder?.graph() else { return }
-        let title = logConfig.sessionTraceFilename ?? name
-        let traceCollection = SessionTraceCollection(
-            title: title,
-            sessionGraph: sessionGraph
-        )
-        do {
-            if let path = try traceCollection.save() {
-                logger.info("Saved reducer session trace to \n\(path)")
-                if logConfig.liveTrace == nil {
-                    sessionGraphRecorder?.reset()
-                }
-            }
-            else {
-                logger.error("Failed to save reducer session trace.")
-            }
-        }
-        catch {
-            logger.error(message: "Failed to save reducer session trace.", error)
-        }
-    }
-
-}
-
-extension StateStore.LogConfig {
-    /// Keeps tracing configuration consistent: filenames imply saving, and saving implies graph capture.
-    mutating func enforceSessionTraceInvariants() {
-        guard !enforcingSessionTraceInvariants else { return }
-        enforcingSessionTraceInvariants = true
-        defer { enforcingSessionTraceInvariants = false }
-
-        if sessionTraceFilename != nil {
-            saveSessionTrace = true
-        }
-        if saveSessionTrace || liveTrace != nil {
-            captureSessionGraph = true
-        }
     }
 }

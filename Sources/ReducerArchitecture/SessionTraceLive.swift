@@ -13,28 +13,33 @@ public struct SessionTraceLiveConfig: Sendable {
     public var host: String
     public var port: UInt16
     public var reconnectDelay: TimeInterval
+    public var patchBufferCapacity: Int
 
     public init(
         title: String? = nil,
         host: String = SessionTraceLiveDefaults.defaultHost,
         port: UInt16 = SessionTraceLiveDefaults.defaultPort,
-        reconnectDelay: TimeInterval = 1
+        reconnectDelay: TimeInterval = 1,
+        patchBufferCapacity: Int = 256
     ) {
         self.title = title
         self.host = host
         self.port = port
         self.reconnectDelay = reconnectDelay
+        self.patchBufferCapacity = max(1, patchBufferCapacity)
     }
 
     public static func sessionViewer(
         title: String? = nil,
         host: String = SessionTraceLiveDefaults.defaultHost,
-        port: UInt16 = SessionTraceLiveDefaults.defaultPort
+        port: UInt16 = SessionTraceLiveDefaults.defaultPort,
+        patchBufferCapacity: Int = 256
     ) -> Self {
         .init(
             title: title,
             host: host,
-            port: port
+            port: port,
+            patchBufferCapacity: patchBufferCapacity
         )
     }
 }
@@ -132,6 +137,100 @@ public struct SessionTraceLiveEnvelope: Codable, @unchecked Sendable {
             sessionID: sessionID,
             kind: .end
         )
+    }
+}
+
+public struct SessionTraceLiveAccumulator: @unchecked Sendable {
+    public var title: String
+
+    private let sessionID: String
+    private var schemaVersion: Int
+    private var storeInstanceID: SessionGraph.StoreInstanceID
+    private var nodesByID: [String: SessionGraph.Node]
+    private var edges: [SessionGraph.Edge]
+
+    public init(
+        title: String,
+        sessionID: String
+    ) {
+        self.title = title
+        self.sessionID = sessionID
+        self.schemaVersion = SessionGraph.currentSchemaVersion
+        self.storeInstanceID = .init(rawValue: sessionID)
+        self.nodesByID = [:]
+        self.edges = []
+    }
+
+    public mutating func apply(metadata: SessionTraceLiveSessionMetadata) {
+        guard metadata.sessionID == sessionID else { return }
+        title = metadata.title
+    }
+
+    public mutating func replace(with traceCollection: SessionTraceCollection) {
+        title = traceCollection.title
+        schemaVersion = traceCollection.sessionGraph.schemaVersion
+        storeInstanceID = traceCollection.sessionGraph.storeInstanceID
+        nodesByID = Dictionary(
+            uniqueKeysWithValues: traceCollection.sessionGraph.nodes.map { ($0.id, $0) }
+        )
+        edges = traceCollection.sessionGraph.edges.sorted(by: Self.edgeSort)
+    }
+
+    public mutating func apply(_ patch: SessionTraceLivePatch) {
+        switch patch {
+        case .upsertNode(let node):
+            nodesByID[node.id] = node
+
+        case .appendEdge(let edge):
+            edges.append(edge)
+        }
+    }
+
+    public mutating func apply(_ envelope: SessionTraceLiveEnvelope) {
+        guard envelope.sessionID == sessionID else { return }
+
+        switch envelope.kind {
+        case .hello:
+            if let metadata = envelope.metadata {
+                apply(metadata: metadata)
+            }
+
+        case .snapshot:
+            if let traceCollection = envelope.traceCollection {
+                replace(with: traceCollection)
+            }
+
+        case .patch:
+            if let patch = envelope.patch {
+                apply(patch)
+            }
+
+        case .end:
+            break
+        }
+    }
+
+    public var traceCollection: SessionTraceCollection {
+        .init(
+            title: title,
+            sessionGraph: .init(
+                schemaVersion: schemaVersion,
+                storeInstanceID: storeInstanceID,
+                nodes: nodesByID.values.sorted(by: Self.nodeSort),
+                edges: edges.sorted(by: Self.edgeSort)
+            )
+        )
+    }
+
+    private static func nodeSort(lhs: SessionGraph.Node, rhs: SessionGraph.Node) -> Bool {
+        if lhs.order == rhs.order {
+            return lhs.id < rhs.id
+        }
+        return lhs.order < rhs.order
+    }
+
+    private static func edgeSort(lhs: SessionGraph.Edge, rhs: SessionGraph.Edge) -> Bool {
+        lhs.order < rhs.order
     }
 }
 

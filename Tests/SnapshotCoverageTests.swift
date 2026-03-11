@@ -96,33 +96,6 @@ extension SessionTraceTests.SessionTraceCoverageTests {
         #expect(savedPath == nil)
     }
 
-    // Fail snapshot save then save again successfully.
-    // Expect failed save keeps pending snapshots for retry.
-    @Test
-    func saveSessionTraceIfNeededKeepsPendingTraceAfterFailedSave() throws {
-        // Set up store with snapshot logging.
-        let store = SnapshotGapNsp.store()
-        let successfulTitle = "snapshot-success-\(UUID().uuidString)"
-        let successfulURL = try sessionTraceFileURL(title: successfulTitle)
-        defer { try? FileManager.default.removeItem(at: successfulURL) }
-        store.logConfig.saveSessionTrace = true
-
-        // Trigger failing save, then successful save.
-
-        store.logConfig.sessionTraceFilename = "invalid/\(UUID().uuidString)/snap"
-        store.send(.mutating(.append(1)))
-        store.saveSessionTraceIfNeeded()
-
-        store.logConfig.sessionTraceFilename = successfulTitle
-        store.send(.mutating(.append(2)))
-        store.saveSessionTraceIfNeeded()
-
-        // Expect first snapshot batch persisted on retry.
-        let collection = try SessionTraceCollection.load(from: successfulURL)
-        #expect(actionNodes(in: collection).count == 2)
-        #expect(lastValuesStateString(in: collection) == "[1, 2]")
-    }
-
     private func reducerLogsFolderURL() throws -> URL {
         let root = try FileManager.default.url(
             for: .cachesDirectory,
@@ -131,12 +104,6 @@ extension SessionTraceTests.SessionTraceCoverageTests {
             create: false
         )
         return root.appendingPathComponent("ReducerLogs")
-    }
-
-    private func sessionTraceFileURL(title: String) throws -> URL {
-        try reducerLogsFolderURL()
-            .appendingPathComponent("\(title)", conformingTo: .data)
-            .appendingPathExtension("lzma")
     }
 
     private func actionNodes(in collection: SessionTraceCollection) -> [SessionGraph.ActionNode] {

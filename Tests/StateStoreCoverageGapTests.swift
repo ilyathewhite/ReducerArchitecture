@@ -228,44 +228,16 @@ extension StateStoreTests.StateStoreCoverageGapTests {
         #expect(nonStoreChild == nil)
     }
 
-    // Enable trace persistence.
-    // Expect graph capture is enabled automatically.
+    // Enable in-process live trace handling.
+    // Expect tracing can be enabled without network config.
     @Test
-    func enablingSaveSessionTraceEnablesCaptureSessionGraph() {
+    func enablingLiveTraceHandlerKeepsNetworkTracingDisabled() {
         var logConfig = NestedTaskGapNsp.Store.LogConfig()
 
-        logConfig.saveSessionTrace = true
+        logConfig.liveTraceHandler = { _ in }
 
-        #expect(logConfig.saveSessionTrace)
-        #expect(logConfig.captureSessionGraph)
-    }
-
-    // Set trace filename.
-    // Expect save and graph capture are enabled automatically.
-    @Test
-    func settingSessionTraceFilenameEnablesSaveAndCapture() {
-        var logConfig = NestedTaskGapNsp.Store.LogConfig()
-
-        logConfig.sessionTraceFilename = "trace-file"
-
-        #expect(logConfig.sessionTraceFilename == "trace-file")
-        #expect(logConfig.saveSessionTrace)
-        #expect(logConfig.captureSessionGraph)
-    }
-
-    // With trace filename configured.
-    // Expect save/capture cannot be disabled.
-    @Test
-    func sessionTraceFilenameKeepsSaveAndCaptureEnabled() {
-        var logConfig = NestedTaskGapNsp.Store.LogConfig()
-
-        logConfig.sessionTraceFilename = "trace-file"
-        logConfig.saveSessionTrace = false
-        logConfig.captureSessionGraph = false
-
-        #expect(logConfig.sessionTraceFilename == "trace-file")
-        #expect(logConfig.saveSessionTrace)
-        #expect(logConfig.captureSessionGraph)
+        #expect(logConfig.liveTrace == nil)
+        #expect(logConfig.liveTraceHandler != nil)
     }
 
     // MARK: - Effect Execution

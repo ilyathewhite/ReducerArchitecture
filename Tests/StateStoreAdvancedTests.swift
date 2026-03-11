@@ -339,67 +339,52 @@ extension SessionTraceTests {
 }
 
 extension SessionTraceTests.StateStoreSessionTracePersistenceTests {
-    // Save snapshots after mutations.
-    // Expect latest state is persisted.
+    // Stream live trace patches after mutations.
+    // Expect accumulated trace reflects the latest state.
     @Test
-    func saveSessionTraceIfNeededWritesLatestActionState() throws {
-        // Set up snapshot file and store logging.
-        let title = "store-snapshots-\(UUID().uuidString)"
-        let fileURL = try stateStoreSessionTraceFileURL(title: title)
-        defer { try? FileManager.default.removeItem(at: fileURL) }
+    func liveTraceHandlerAccumulatesLatestActionState() async throws {
         let store = EffectHarnessNsp.store()
-        store.logConfig.saveSessionTrace = true
-        store.logConfig.sessionTraceFilename = title
+        let collectionTask = liveTraceCollectionTask(for: store)
 
-        // Trigger mutations and save snapshots.
         store.send(.mutating(.append(1)))
-        store.saveSessionTraceIfNeeded()
         store.send(.mutating(.append(2)))
-        store.saveSessionTraceIfNeeded()
-        let collection = try SessionTraceCollection.load(from: fileURL)
+        let collection = try await collectionTask.value
 
-        // Expect snapshot count and latest values.
-        #expect(actionNodes(in: collection).count == 1)
+        #expect(actionNodes(in: collection).count == 2)
         #expect(lastValuesStateString(in: collection) == "[1, 2]")
     }
 
-    // Drop store with snapshot persistence enabled.
-    // Expect deinit auto-saves latest traced state.
+    // Drop store with live trace handler enabled.
+    // Expect the handler receives an end envelope.
     @Test
-    func deinitAutoSavesSessionTraceWhenEnabled() async throws {
-        let title = "store-snapshots-deinit-\(UUID().uuidString)"
-        let fileURL = try stateStoreSessionTraceFileURL(title: title)
-        defer { try? FileManager.default.removeItem(at: fileURL) }
+    func deinitEndsLiveTraceSessionWhenHandlerIsEnabled() async throws {
         weak var weakStore: EffectHarnessNsp.Store?
+        let collector: SessionTraceEnvelopeCollector
 
         do {
             let store = EffectHarnessNsp.store()
             weakStore = store
-            store.logConfig.saveSessionTrace = true
-            store.logConfig.sessionTraceFilename = title
+            collector = liveTraceEnvelopeCollector(for: store)
             store.send(.mutating(.append(7)))
             store.send(.mutating(.append(8)))
         }
-        await Task.yield()
 
         #expect(weakStore == nil)
-        #expect(try await waitForFileToExist(at: fileURL))
-
-        let collection = try SessionTraceCollection.load(from: fileURL)
-        #expect(actionNodes(in: collection).count == 2)
-        #expect(lastValuesStateString(in: collection) == "[7, 8]")
+        try await collector.waitForEnd()
     }
 
-    private func waitForFileToExist(
-        at url: URL
-    ) async throws -> Bool {
-        for _ in 0..<50 {
-            if FileManager.default.fileExists(atPath: url.path) {
-                return true
-            }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        return false
+    // Enable then disable live trace handling.
+    // Expect the existing live session is ended once tracing is turned off.
+    @Test
+    func disablingLiveTraceHandlerEndsExistingSession() async throws {
+        let store = EffectHarnessNsp.store()
+        let collector = liveTraceEnvelopeCollector(for: store)
+
+        store.send(.mutating(.append(1)))
+        store.logConfig.liveTraceHandler = nil
+        store.send(.mutating(.append(2)))
+
+        try await collector.waitForEnd()
     }
 }
 
@@ -437,19 +422,6 @@ extension LifecycleTests.StateStoreLifecycleTests {
         let unwrappedTrackedID = try #require(trackedID)
         #expect(storeLifecycleLog.lastEvent[unwrappedTrackedID] == nil)
     }
-}
-
-private func stateStoreSessionTraceFileURL(title: String) throws -> URL {
-    let root = try FileManager.default.url(
-        for: .cachesDirectory,
-        in: .userDomainMask,
-        appropriateFor: nil,
-        create: false
-    )
-    return root
-        .appendingPathComponent("ReducerLogs")
-        .appendingPathComponent("\(title)", conformingTo: .data)
-        .appendingPathExtension("lzma")
 }
 
 private func actionNodes(in collection: SessionTraceCollection) -> [SessionGraph.ActionNode] {

@@ -222,13 +222,14 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     internal var logger: Logger {
         logConfig.logger
     }
-    /// In-memory recorder for the store's current trace segment.
+    /// Recorder for one store's live trace stream.
     ///
-    /// The recorder is created on first traced action/effect, reused across subsequent sends so
-    /// they end up in one graph, and reset only after an explicit save. Deallocation also drains
-    /// its contents to disk when `logConfig.saveSessionTrace` is enabled.
+    /// The recorder is created on first traced action/effect and reused across subsequent sends
+    /// so ids, open actions, open effects, and batch sequencing stay stable for the session.
     var sessionGraphRecorder: SessionGraphRecorder?
+    var sessionTraceLiveMetadata: SessionTraceLiveSessionMetadata?
     var sessionTraceLiveClient: SessionTraceLiveClient?
+    var sessionTraceLiveHandler: SessionTraceLiveHandler?
 
     @Published public private(set) var state: State
     public private(set) var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
@@ -243,7 +244,9 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     public init(_ initialValue: State, env: Environment?) {
         self.name = Self.storeDefaultKey
         self.sessionGraphRecorder = nil
+        self.sessionTraceLiveMetadata = nil
         self.sessionTraceLiveClient = nil
+        self.sessionTraceLiveHandler = nil
         self.state = initialValue
         self.environment = env
 
@@ -258,13 +261,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     
     deinit {
         sessionTraceLiveClient?.endSession()
-        sessionTraceHandleDeinit(
-            recorder: sessionGraphRecorder,
-            saveSessionTrace: logConfig.saveSessionTrace,
-            logger: logConfig.logger,
-            sessionTraceFilename: logConfig.sessionTraceFilename,
-            storeName: name
-        )
+        sessionTraceLiveHandler?.endSession()
 
         if storeLifecycleLog.enabled {
             let name = Self.storeDefaultKey
@@ -620,7 +617,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         line: Int? = #line
     ) -> Task<Void, Never>? {
         apply(anim) { () -> Task<Void, Never>? in
-            sessionTraceSyncLiveClientIfNeeded()
+            sessionTraceSyncLiveOutputsIfNeeded()
             guard !isCancelled else {
                 switch storeAction.action {
                 case .cancel:
@@ -887,44 +884,13 @@ extension StateStore {
         public var logState = false
         public var logActions = false
         public var logActionCallSite = false
-        /// Enables trace persistence for this store.
+        /// Streams live trace updates to a remote viewer with a bounded sender-side patch buffer.
+        public var liveTrace: SessionTraceLiveConfig? = nil
+        /// Mirrors the same live-trace envelopes to an in-process receiver.
         ///
-        /// When `true`, the runtime also enables graph capture and keeps appending traced actions,
-        /// effects, mutations, and state transitions into `sessionGraphRecorder`. The buffered
-        /// graph is written by `saveSessionTraceIfNeeded()` and, if still present, again during
-        /// store deallocation. Manual saves reset the recorder so later events start a new trace
-        /// segment.
-        public var saveSessionTrace = false {
-            didSet {
-                enforceSessionTraceInvariants()
-            }
-        }
-        /// Overrides the title and filename stem used for persisted trace files.
-        ///
-        /// This value affects only persistence metadata; it does not change store ids or node ids
-        /// inside the graph. Setting a non-`nil` value also enables `saveSessionTrace`, so the
-        /// current recorder contents will be eligible for manual save and deinit save behavior.
-        public var sessionTraceFilename: String? = nil {
-            didSet {
-                enforceSessionTraceInvariants()
-            }
-        }
-        /// Enables in-memory session graph capture without requiring persistence.
-        ///
-        /// This is useful for tests and tooling that inspect `sessionGraphRecorder` directly. If
-        /// `saveSessionTrace` is later enabled, this flag is kept on automatically because saving
-        /// depends on having the graph in memory first.
-        public var captureSessionGraph = false {
-            didSet {
-                enforceSessionTraceInvariants()
-            }
-        }
-        /// Streams live trace updates to a remote viewer while keeping the in-memory graph active.
-        public var liveTrace: SessionTraceLiveConfig? = nil {
-            didSet {
-                enforceSessionTraceInvariants()
-            }
-        }
+        /// This is useful for tests and tools that want the exact live-trace payloads without
+        /// routing them through a TCP listener.
+        public var liveTraceHandler: (@Sendable (SessionTraceLiveEnvelope) -> Void)?
 
         public var logEnabled: Bool {
             logState || logActions || logActionCallSite
@@ -932,7 +898,6 @@ extension StateStore {
 
         internal var logger: Logger
         public var logUserActions: ((_ actionName: String, _ actionDetails: String?) -> Void)?
-        var enforcingSessionTraceInvariants = false
 
         public init(
             logState: Bool = false,
@@ -945,14 +910,5 @@ extension StateStore {
             self.logger = logger
             self.logUserActions = logUserActions
         }
-    }
-
-    @MainActor
-    /// Persists the currently buffered trace graph, if one exists.
-    ///
-    /// This is a no-op when `logConfig.saveSessionTrace` is disabled or no events have been
-    /// recorded yet. On success, the recorder is reset so later traced events begin a fresh graph.
-    public func saveSessionTraceIfNeeded() {
-        saveSessionTraceIfNeededImpl()
     }
 }

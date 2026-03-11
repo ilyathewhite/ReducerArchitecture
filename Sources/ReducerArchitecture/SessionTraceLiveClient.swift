@@ -12,28 +12,27 @@ final class SessionTraceLiveClient: @unchecked Sendable {
     private let sessionID: String
     private let config: SessionTraceLiveConfig
     private let metadata: SessionTraceLiveSessionMetadata
-    private let snapshotProvider: @MainActor () -> SessionTraceCollection?
     private let logger: Logger
     private let queue: DispatchQueue
 
     private var connection: NWConnection?
     private var isReady = false
     private var handshakeInProgress = false
-    private var needsSnapshot = true
     private var shouldKeepRunning = true
     private var reconnectWorkItem: DispatchWorkItem?
+    private var pendingPatches: [SessionTraceLivePatch] = []
+    private var isSendingPatch = false
+    private var hasLoggedDroppedPatchWarning = false
 
     init(
         sessionID: String,
         config: SessionTraceLiveConfig,
         metadata: SessionTraceLiveSessionMetadata,
-        snapshotProvider: @escaping @MainActor () -> SessionTraceCollection?,
         logger: Logger
     ) {
         self.sessionID = sessionID
         self.config = config
         self.metadata = metadata
-        self.snapshotProvider = snapshotProvider
         self.logger = logger
         self.queue = DispatchQueue(label: "ReducerArchitecture.SessionTraceLiveClient.\(sessionID)")
         queue.async { [weak self] in
@@ -46,17 +45,9 @@ final class SessionTraceLiveClient: @unchecked Sendable {
             guard let self else { return }
             guard self.shouldKeepRunning else { return }
 
-            let envelope = SessionTraceLiveEnvelope.patch(
-                sessionID: self.sessionID,
-                patch: patch
-            )
-            if self.isReady, !self.handshakeInProgress {
-                self.send(envelope)
-            }
-            else {
-                self.needsSnapshot = true
-                self.connectIfNeeded()
-            }
+            self.enqueue(patch)
+            self.connectIfNeeded()
+            self.drainPendingPatchesIfPossible()
         }
     }
 
@@ -67,7 +58,7 @@ final class SessionTraceLiveClient: @unchecked Sendable {
             self.reconnectWorkItem?.cancel()
             self.reconnectWorkItem = nil
 
-            if self.isReady {
+            if self.isReady, !self.handshakeInProgress, !self.isSendingPatch {
                 self.send(.end(sessionID: self.sessionID)) { [weak self] in
                     self?.connection?.cancel()
                     self?.connection = nil
@@ -80,6 +71,7 @@ final class SessionTraceLiveClient: @unchecked Sendable {
                 self.connection = nil
                 self.isReady = false
                 self.handshakeInProgress = false
+                self.isSendingPatch = false
             }
         }
     }
@@ -141,7 +133,7 @@ final class SessionTraceLiveClient: @unchecked Sendable {
         connection = nil
         isReady = false
         handshakeInProgress = false
-        needsSnapshot = true
+        isSendingPatch = false
         scheduleReconnect()
     }
 
@@ -158,52 +150,46 @@ final class SessionTraceLiveClient: @unchecked Sendable {
     private func startHandshake() {
         guard shouldKeepRunning else { return }
         handshakeInProgress = true
-        needsSnapshot = true
         send(.hello(metadata)) { [weak self] in
             guard let self else { return }
             self.handshakeInProgress = false
-            self.refreshSnapshotIfNeeded()
+            self.drainPendingPatchesIfPossible()
         }
     }
 
-    private func refreshSnapshotIfNeeded() {
+    private func enqueue(_ patch: SessionTraceLivePatch) {
+        pendingPatches.append(patch)
+        guard pendingPatches.count > config.patchBufferCapacity else { return }
+
+        pendingPatches.removeFirst(pendingPatches.count - config.patchBufferCapacity)
+        if !hasLoggedDroppedPatchWarning {
+            logger.warning(
+                "Live trace patch buffer overflowed for \(self.sessionID, privacy: .public); older patches were dropped."
+            )
+            hasLoggedDroppedPatchWarning = true
+        }
+    }
+
+    private func drainPendingPatchesIfPossible() {
         guard shouldKeepRunning else { return }
         guard isReady else { return }
         guard !handshakeInProgress else { return }
-        guard needsSnapshot else { return }
+        guard !isSendingPatch else { return }
+        guard let patch = pendingPatches.first else { return }
 
-        handshakeInProgress = true
-        needsSnapshot = false
-
-        Task { @MainActor [weak self, sessionID, snapshotProvider] in
+        isSendingPatch = true
+        send(
+            .patch(
+                sessionID: sessionID,
+                patch: patch
+            )
+        ) { [weak self] in
             guard let self else { return }
-            let snapshotEnvelope = snapshotProvider().map {
-                SessionTraceLiveEnvelope.snapshot(
-                    sessionID: sessionID,
-                    traceCollection: $0
-                )
+            self.isSendingPatch = false
+            if !self.pendingPatches.isEmpty {
+                self.pendingPatches.removeFirst()
             }
-
-            self.queue.async { [weak self] in
-                guard let self else { return }
-                guard self.isReady, self.shouldKeepRunning else {
-                    self.handshakeInProgress = false
-                    self.needsSnapshot = true
-                    return
-                }
-
-                if let snapshotEnvelope {
-                    self.send(snapshotEnvelope) { [weak self] in
-                        guard let self else { return }
-                        self.handshakeInProgress = false
-                        self.refreshSnapshotIfNeeded()
-                    }
-                }
-                else {
-                    self.handshakeInProgress = false
-                    self.refreshSnapshotIfNeeded()
-                }
-            }
+            self.drainPendingPatchesIfPossible()
         }
     }
 
@@ -236,7 +222,6 @@ final class SessionTraceLiveClient {
         sessionID: String,
         config: SessionTraceLiveConfig,
         metadata: SessionTraceLiveSessionMetadata,
-        snapshotProvider: @escaping @MainActor () -> SessionTraceCollection?,
         logger: Logger
     ) {}
 

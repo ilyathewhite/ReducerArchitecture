@@ -11,7 +11,7 @@ import Tagged
 /// `StateStore` instance was active. Nodes describe observed entities such as actions, mutations,
 /// effects, batches, and state snapshots. Edges describe why those nodes exist and how control
 /// and data moved between them.
-public struct SessionGraph: Codable, Equatable {
+public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     public enum StoreInstanceIDTag {}
     /// Identifies one traced store instance within a session graph.
     public typealias StoreInstanceID = Tagged<StoreInstanceIDTag, String>
@@ -521,10 +521,9 @@ public struct SessionGraph: Codable, Equatable {
 final class SessionGraphRecorder {
     /// The store-instance id used as the prefix for every generated node and animation-group id.
     let storeInstanceID: SessionGraph.StoreInstanceID
-    var livePatchHandler: ((SessionTraceLivePatch) -> Void)?
 
-    private var nodes: [SessionGraph.Node] = []
-    private var edges: [SessionGraph.Edge] = []
+    private let sink: SessionGraphRecorderActor
+    private var pendingTask: Task<Void, Never>?
 
     private var nextOrder = 0
     private var nextState = 0
@@ -535,8 +534,8 @@ final class SessionGraphRecorder {
     private var nextAnimationGroup = 0
 
     private var actionStack: [SessionGraph.ActionID] = []
-    private var actionNodeIndexByID: [SessionGraph.ActionID: Int] = [:]
-    private var effectNodeIndexByID: [SessionGraph.EffectID: Int] = [:]
+    private var actionNodesByID: [SessionGraph.ActionID: SessionGraph.ActionNode] = [:]
+    private var effectNodesByID: [SessionGraph.EffectID: SessionGraph.EffectNode] = [:]
     private var containsIndexByBatchID: [SessionGraph.BatchID: Int] = [:]
     private var productionIndexByActionID: [SessionGraph.ActionID: Int] = [:]
     private var emissionEdgeIndexByEffectID: [SessionGraph.EffectID: Int] = [:]
@@ -549,13 +548,15 @@ final class SessionGraphRecorder {
     /// current graph snapshot.
     init(storeInstanceID: SessionGraph.StoreInstanceID) {
         self.storeInstanceID = storeInstanceID
+        self.sink = .init()
     }
 
-    /// Returns `true` after the recorder has captured at least one node.
-    ///
-    /// Persistence helpers use this to avoid saving empty trace files.
-    var hasEvents: Bool {
-        !nodes.isEmpty
+    func setLiveClient(_ liveClient: SessionTraceLiveClient?) {
+        enqueue([.setLiveClient(liveClient)])
+    }
+
+    func setLiveHandler(_ liveHandler: SessionTraceLiveHandler?) {
+        enqueue([.setLiveHandler(liveHandler)])
     }
 
     /// Allocates a new animation-lineage identifier.
@@ -580,9 +581,11 @@ final class SessionGraphRecorder {
         callSite: SessionGraph.ActionNode.CallSite?,
         containingBatchID: SessionGraph.BatchID?
     ) -> SessionGraph.ActionID {
+        var operations: [SessionGraphRecorderOperation] = []
         ensureInitialStateNodeIfNeeded(
             capturedAt: receivedAt,
-            state: stateBefore
+            state: stateBefore,
+            operations: &operations
         )
 
         let actionID = makeActionID()
@@ -602,11 +605,12 @@ final class SessionGraphRecorder {
             stateAfter: nil,
             outputEffect: nil
         )
-        appendNode(.action(node))
-        actionNodeIndexByID[actionID] = nodes.endIndex - 1
+        actionNodesByID[actionID] = node
+        operations.append(.upsertNode(.action(node)))
 
         if let parentActionID = actionStack.last {
-            appendEdge(
+            operations.append(
+                .appendEdge(
                 .nested(
                     .init(
                         order: makeOrder(),
@@ -615,10 +619,12 @@ final class SessionGraphRecorder {
                     )
                 )
             )
+            )
         }
 
         if let containingBatchID {
-            appendEdge(
+            operations.append(
+                .appendEdge(
                 .contains(
                     .init(
                         order: makeOrder(),
@@ -628,13 +634,15 @@ final class SessionGraphRecorder {
                     )
                 )
             )
+            )
         }
 
         switch source {
         case .effect(let effectID):
-            incrementEmittedActionCount(for: effectID)
+            incrementEmittedActionCount(for: effectID, operations: &operations)
             if containingBatchID == nil {
-                appendEdge(
+                operations.append(
+                    .appendEdge(
                     .emittedAction(
                         .init(
                             order: makeOrder(),
@@ -644,11 +652,13 @@ final class SessionGraphRecorder {
                         )
                     )
                 )
+                )
             }
 
         case .action(let parentActionID):
             if containingBatchID == nil {
-                appendEdge(
+                operations.append(
+                    .appendEdge(
                     .producedAction(
                         .init(
                             order: makeOrder(),
@@ -658,6 +668,7 @@ final class SessionGraphRecorder {
                         )
                     )
                 )
+                )
             }
 
         case .user, .system:
@@ -665,6 +676,7 @@ final class SessionGraphRecorder {
         }
 
         actionStack.append(actionID)
+        enqueue(operations)
         return actionID
     }
 
@@ -674,13 +686,13 @@ final class SessionGraphRecorder {
         stateAfter: [CodePropertyValuePair],
         outputEffect: String
     ) {
-        if let nodeIndex = actionNodeIndexByID[actionID],
-           case .action(var actionNode) = nodes[nodeIndex],
+        if var actionNode = actionNodesByID[actionID],
            actionNode.completedAt == nil {
             actionNode.completedAt = completedAt
             actionNode.stateAfter = stateAfter
             actionNode.outputEffect = outputEffect
-            updateNode(.action(actionNode), at: nodeIndex)
+            enqueue([.upsertNode(.action(actionNode))])
+            actionNodesByID.removeValue(forKey: actionID)
         }
         guard let stackIndex = actionStack.lastIndex(of: actionID) else {
             return
@@ -706,16 +718,18 @@ final class SessionGraphRecorder {
             after: after,
             propertyDiff: Self.propertyDiff(before: before, after: after)
         )
-        appendNode(.mutation(node))
-        appendEdge(
-            .applied(
-                .init(
-                    order: makeOrder(),
-                    actionID: actionID,
-                    mutationID: mutationID
+        enqueue([
+            .upsertNode(.mutation(node)),
+            .appendEdge(
+                .applied(
+                    .init(
+                        order: makeOrder(),
+                        actionID: actionID,
+                        mutationID: mutationID
+                    )
                 )
             )
-        )
+        ])
         return mutationID
     }
 
@@ -725,37 +739,45 @@ final class SessionGraphRecorder {
         stateBefore: [CodePropertyValuePair],
         stateAfter: [CodePropertyValuePair]
     ) {
+        var operations: [SessionGraphRecorderOperation] = []
         ensureInitialStateNodeIfNeeded(
             capturedAt: appliedAt,
-            state: stateBefore
+            state: stateBefore,
+            operations: &operations
         )
         guard let inputStateID = latestStateNodeID else {
             return
         }
 
-        appendEdge(
-            .stateInput(
-                .init(
-                    order: makeOrder(),
-                    stateID: inputStateID,
-                    actionID: actionID
+        operations.append(
+            .appendEdge(
+                .stateInput(
+                    .init(
+                        order: makeOrder(),
+                        stateID: inputStateID,
+                        actionID: actionID
+                    )
                 )
             )
         )
 
         let resultStateID = appendStateNode(
             capturedAt: appliedAt,
-            state: stateAfter
+            state: stateAfter,
+            operations: &operations
         )
-        appendEdge(
-            .stateResult(
-                .init(
-                    order: makeOrder(),
-                    actionID: actionID,
-                    stateID: resultStateID
+        operations.append(
+            .appendEdge(
+                .stateResult(
+                    .init(
+                        order: makeOrder(),
+                        actionID: actionID,
+                        stateID: resultStateID
+                    )
                 )
             )
         )
+        enqueue(operations)
     }
 
     func beginEffect(
@@ -767,8 +789,13 @@ final class SessionGraphRecorder {
         nestedLevel: Int,
         animationGroupID: String?
     ) -> SessionGraph.EffectID {
+        var operations: [SessionGraphRecorderOperation] = []
         if let cancellationKey, let previousEffectID = latestEffectByKey[cancellationKey] {
-            completeEffect(previousEffectID, cancelled: true)
+            completeEffect(
+                previousEffectID,
+                cancelled: true,
+                operations: &operations
+            )
         }
 
         let effectID = makeEffectID()
@@ -786,11 +813,12 @@ final class SessionGraphRecorder {
             lifecycle: .started,
             endOrder: nil
         )
-        appendNode(.effect(node))
-        effectNodeIndexByID[effectID] = nodes.endIndex - 1
+        effectNodesByID[effectID] = node
+        operations.append(.upsertNode(.effect(node)))
 
         if let startedByActionID {
-            appendEdge(
+            operations.append(
+                .appendEdge(
                 .startedEffect(
                     .init(
                         order: makeOrder(),
@@ -799,12 +827,14 @@ final class SessionGraphRecorder {
                     )
                 )
             )
+            )
         }
 
         if let cancellationKey {
             latestEffectByKey[cancellationKey] = effectID
         }
 
+        enqueue(operations)
         return effectID
     }
 
@@ -816,6 +846,7 @@ final class SessionGraphRecorder {
         producedByActionID: SessionGraph.ActionID?,
         emittedByEffectID: SessionGraph.EffectID?
     ) -> SessionGraph.BatchID {
+        var operations: [SessionGraphRecorderOperation] = []
         let batchID = makeBatchID()
         let node = SessionGraph.BatchNode(
             id: batchID,
@@ -825,10 +856,11 @@ final class SessionGraphRecorder {
             nestedLevel: nestedLevel,
             animationGroupID: animationGroupID
         )
-        appendNode(.batch(node))
+        operations.append(.upsertNode(.batch(node)))
 
         if let parentActionID = actionStack.last {
-            appendEdge(
+            operations.append(
+                .appendEdge(
                 .nested(
                     .init(
                         order: makeOrder(),
@@ -837,10 +869,12 @@ final class SessionGraphRecorder {
                     )
                 )
             )
+            )
         }
 
         if let producedByActionID {
-            appendEdge(
+            operations.append(
+                .appendEdge(
                 .producedAction(
                     .init(
                         order: makeOrder(),
@@ -850,10 +884,12 @@ final class SessionGraphRecorder {
                     )
                 )
             )
+            )
         }
 
         if let emittedByEffectID {
-            appendEdge(
+            operations.append(
+                .appendEdge(
                 .emittedAction(
                     .init(
                         order: makeOrder(),
@@ -863,25 +899,37 @@ final class SessionGraphRecorder {
                     )
                 )
             )
+            )
         }
 
+        enqueue(operations)
         return batchID
     }
 
     func completeEffect(_ effectID: SessionGraph.EffectID, cancelled: Bool) {
-        guard let nodeIndex = effectNodeIndexByID[effectID] else {
-            return
-        }
-        guard case .effect(var effectNode) = nodes[nodeIndex] else {
-            return
-        }
+        var operations: [SessionGraphRecorderOperation] = []
+        completeEffect(
+            effectID,
+            cancelled: cancelled,
+            operations: &operations
+        )
+        enqueue(operations)
+    }
+
+    private func completeEffect(
+        _ effectID: SessionGraph.EffectID,
+        cancelled: Bool,
+        operations: inout [SessionGraphRecorderOperation]
+    ) {
+        guard var effectNode = effectNodesByID[effectID] else { return }
         guard effectNode.lifecycle == .started else {
             return
         }
 
         effectNode.lifecycle = cancelled ? .cancelled : .finished
         effectNode.endOrder = makeOrder()
-        updateNode(.effect(effectNode), at: nodeIndex)
+        operations.append(.upsertNode(.effect(effectNode)))
+        effectNodesByID.removeValue(forKey: effectID)
 
         if let key = effectNode.cancellationKey, latestEffectByKey[key] == effectID {
             latestEffectByKey.removeValue(forKey: key)
@@ -889,61 +937,29 @@ final class SessionGraphRecorder {
     }
 
     func cancelAllActiveEffects() {
-        let activeEffectIDs = nodes.compactMap { node -> SessionGraph.EffectID? in
-            guard case .effect(let effect) = node, effect.lifecycle == .started else { return nil }
-            return effect.id
-        }
+        let activeEffectIDs = effectNodesByID.values
+            .filter { $0.lifecycle == .started }
+            .sorted { $0.order < $1.order }
+            .map(\.id)
+        var operations: [SessionGraphRecorderOperation] = []
         for effectID in activeEffectIDs {
-            completeEffect(effectID, cancelled: true)
+            completeEffect(
+                effectID,
+                cancelled: true,
+                operations: &operations
+            )
         }
+        enqueue(operations)
     }
 
-    /// Returns an immutable snapshot of the currently recorded graph.
-    ///
-    /// Nodes and edges are sorted before returning so persistence and tests see stable ordering.
-    /// Returns `nil` when the recorder has not captured any events yet.
-    func graph() -> SessionGraph? {
-        guard hasEvents else { return nil }
-        return SessionGraph(
-            storeInstanceID: storeInstanceID,
-            nodes: nodes.sorted(by: Self.nodeSort),
-            edges: edges.sorted(by: Self.edgeSort)
-        )
-    }
-
-    /// Clears the current trace segment while preserving the recorder object.
-    ///
-    /// Manual save uses this after persisting so the same store can continue tracing into a fresh
-    /// graph without allocating a new recorder instance.
-    func reset() {
-        nodes = []
-        edges = []
-        actionStack = []
-        actionNodeIndexByID = [:]
-        effectNodeIndexByID = [:]
-        containsIndexByBatchID = [:]
-        productionIndexByActionID = [:]
-        emissionEdgeIndexByEffectID = [:]
-        latestEffectByKey = [:]
-        nextOrder = 0
-        nextState = 0
-        nextAction = 0
-        nextMutation = 0
-        nextEffect = 0
-        nextBatch = 0
-        nextAnimationGroup = 0
-        latestStateNodeID = nil
-    }
-
-    private func incrementEmittedActionCount(for effectID: SessionGraph.EffectID) {
-        guard let nodeIndex = effectNodeIndexByID[effectID] else {
-            return
-        }
-        guard case .effect(var effectNode) = nodes[nodeIndex] else {
-            return
-        }
+    private func incrementEmittedActionCount(
+        for effectID: SessionGraph.EffectID,
+        operations: inout [SessionGraphRecorderOperation]
+    ) {
+        guard var effectNode = effectNodesByID[effectID] else { return }
         effectNode.emittedActionCount += 1
-        updateNode(.effect(effectNode), at: nodeIndex)
+        effectNodesByID[effectID] = effectNode
+        operations.append(.upsertNode(.effect(effectNode)))
     }
 
     private func nextContainsIndex(for batchID: SessionGraph.BatchID) -> Int {
@@ -1017,47 +1033,34 @@ final class SessionGraphRecorder {
         }
     }
 
-    private static func nodeSort(lhs: SessionGraph.Node, rhs: SessionGraph.Node) -> Bool {
-        if lhs.order == rhs.order {
-            return lhs.id < rhs.id
+    private func enqueue(_ operations: [SessionGraphRecorderOperation]) {
+        guard !operations.isEmpty else { return }
+        let previousTask = pendingTask
+        let sink = self.sink
+        pendingTask = Task.detached {
+            _ = await previousTask?.result
+            await sink.apply(operations)
         }
-        return lhs.order < rhs.order
-    }
-
-    private static func edgeSort(lhs: SessionGraph.Edge, rhs: SessionGraph.Edge) -> Bool {
-        lhs.order < rhs.order
-    }
-
-    private func appendNode(_ node: SessionGraph.Node) {
-        nodes.append(node)
-        livePatchHandler?(.upsertNode(node))
-    }
-
-    private func updateNode(_ node: SessionGraph.Node, at index: Int) {
-        nodes[index] = node
-        livePatchHandler?(.upsertNode(node))
-    }
-
-    private func appendEdge(_ edge: SessionGraph.Edge) {
-        edges.append(edge)
-        livePatchHandler?(.appendEdge(edge))
     }
 
     private func ensureInitialStateNodeIfNeeded(
         capturedAt: Date,
-        state: [CodePropertyValuePair]
+        state: [CodePropertyValuePair],
+        operations: inout [SessionGraphRecorderOperation]
     ) {
         guard latestStateNodeID == nil else { return }
         _ = appendStateNode(
             capturedAt: capturedAt,
-            state: state
+            state: state,
+            operations: &operations
         )
     }
 
     @discardableResult
     private func appendStateNode(
         capturedAt: Date,
-        state: [CodePropertyValuePair]
+        state: [CodePropertyValuePair],
+        operations: inout [SessionGraphRecorderOperation]
     ) -> SessionGraph.StateID {
         let stateID = makeStateID()
         let node = SessionGraph.StateNode(
@@ -1066,8 +1069,40 @@ final class SessionGraphRecorder {
             capturedAt: capturedAt,
             state: state
         )
-        appendNode(.state(node))
+        operations.append(.upsertNode(.state(node)))
         latestStateNodeID = stateID
         return stateID
+    }
+}
+
+private enum SessionGraphRecorderOperation: @unchecked Sendable {
+    case setLiveClient(SessionTraceLiveClient?)
+    case setLiveHandler(SessionTraceLiveHandler?)
+    case upsertNode(SessionGraph.Node)
+    case appendEdge(SessionGraph.Edge)
+}
+
+private actor SessionGraphRecorderActor {
+    private var liveClient: SessionTraceLiveClient?
+    private var liveHandler: SessionTraceLiveHandler?
+
+    func apply(_ operations: [SessionGraphRecorderOperation]) {
+        for operation in operations {
+            switch operation {
+            case .setLiveClient(let liveClient):
+                self.liveClient = liveClient
+
+            case .setLiveHandler(let liveHandler):
+                self.liveHandler = liveHandler
+
+            case .upsertNode(let node):
+                liveClient?.record(.upsertNode(node))
+                liveHandler?.record(.upsertNode(node))
+
+            case .appendEdge(let edge):
+                liveClient?.record(.appendEdge(edge))
+                liveHandler?.record(.appendEdge(edge))
+            }
+        }
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import FoundationEx
 import Testing
 @testable import ReducerArchitecture
 
@@ -74,19 +75,13 @@ extension SessionTraceTests {
 
 extension SessionTraceTests.SessionGraphTests {
     @Test
-    func sessionGraphCapturesInitialAndResultStateNodes() throws {
-        let title = "session-graph-state-\(UUID().uuidString)"
-        let logURL = try sessionTraceFileURL(title: title)
-        defer { try? FileManager.default.removeItem(at: logURL) }
-
+    func sessionGraphCapturesInitialAndResultStateNodes() async throws {
         let store = SessionGraphHarnessNsp.store()
-        store.logConfig.saveSessionTrace = true
-        store.logConfig.sessionTraceFilename = title
+        let collectionTask = liveTraceCollectionTask(for: store)
 
         store.send(.mutating(.append(1)))
-        store.saveSessionTraceIfNeeded()
 
-        let collection = try SessionTraceCollection.load(from: logURL)
+        let collection = try await collectionTask.value
         let graph = collection.sessionGraph
 
         let stateNodes = graph.nodes.compactMap { node -> SessionGraph.StateNode? in
@@ -120,25 +115,13 @@ extension SessionTraceTests.SessionGraphTests {
     }
 
     @Test
-    func sessionGraphCapturesWhenPersistenceIsEnabled() throws {
-        let title = "session-graph-persist-\(UUID().uuidString)"
-        let logURL = try sessionTraceFileURL(title: title)
-        defer { try? FileManager.default.removeItem(at: logURL) }
-
+    func sessionGraphCapturesActionDetailsInLiveTrace() async throws {
         let store = SessionGraphHarnessNsp.store()
-        store.logConfig.saveSessionTrace = true
-        store.logConfig.sessionTraceFilename = title
-        #if DEBUG
-        #expect(store.sessionGraphRecorder == nil)
-        #endif
+        let collectionTask = liveTraceCollectionTask(for: store)
 
         store.send(.mutating(.append(1)))
-        #if DEBUG
-        #expect(store.sessionGraphRecorder != nil)
-        #endif
-        store.saveSessionTraceIfNeeded()
 
-        let collection = try SessionTraceCollection.load(from: logURL)
+        let collection = try await collectionTask.value
         let actionNodes = collection.sessionGraph.nodes.compactMap { node -> SessionGraph.ActionNode? in
             guard case .action(let value) = node else { return nil }
             return value
@@ -152,19 +135,13 @@ extension SessionTraceTests.SessionGraphTests {
     }
 
     @Test
-    func sessionGraphCapturesSyncFanOutWithBatchAndDiff() throws {
-        let title = "session-graph-sync-\(UUID().uuidString)"
-        let logURL = try sessionTraceFileURL(title: title)
-        defer { try? FileManager.default.removeItem(at: logURL) }
-
+    func sessionGraphCapturesSyncFanOutWithBatchAndDiff() async throws {
         let store = SessionGraphHarnessNsp.store()
-        store.logConfig.saveSessionTrace = true
-        store.logConfig.sessionTraceFilename = title
+        let collectionTask = liveTraceCollectionTask(for: store)
 
         store.send(.mutating(.fanOut([1, 2])))
-        store.saveSessionTraceIfNeeded()
 
-        let collection = try SessionTraceCollection.load(from: logURL)
+        let collection = try await collectionTask.value
         let graph = collection.sessionGraph
 
         let actionNodes = graph.nodes.compactMap { node -> SessionGraph.ActionNode? in
@@ -217,20 +194,14 @@ extension SessionTraceTests.SessionGraphTests {
 
     @Test
     func sessionGraphCapturesEffectLifecycleBatchAndEmissions() async throws {
-        let title = "session-graph-effect-\(UUID().uuidString)"
-        let logURL = try sessionTraceFileURL(title: title)
-        defer { try? FileManager.default.removeItem(at: logURL) }
-
         let store = SessionGraphHarnessNsp.store()
-        store.logConfig.saveSessionTrace = true
-        store.logConfig.sessionTraceFilename = title
+        let collectionTask = liveTraceCollectionTask(for: store)
 
         let sequenceTask = store.send(.effect(.emitSequence([3, 4])))
         await sequenceTask?.value
         _ = store.send(.effect(.emitActions([5, 6])))
-        store.saveSessionTraceIfNeeded()
 
-        let collection = try SessionTraceCollection.load(from: logURL)
+        let collection = try await collectionTask.value
         let graph = collection.sessionGraph
 
         let actionNodes = graph.nodes.compactMap { node -> SessionGraph.ActionNode? in
@@ -293,21 +264,15 @@ extension SessionTraceTests.SessionGraphTests {
 
     @Test
     func sessionGraphMarksLongLivedEffectAsCancelled() async throws {
-        let title = "session-graph-cancel-\(UUID().uuidString)"
-        let logURL = try sessionTraceFileURL(title: title)
-        defer { try? FileManager.default.removeItem(at: logURL) }
-
         let store = SessionGraphHarnessNsp.store()
-        store.logConfig.saveSessionTrace = true
-        store.logConfig.sessionTraceFilename = title
+        let collectionTask = liveTraceCollectionTask(for: store)
 
         let task = store.send(.effect(.startLongLivedSequence))
         try? await Task.sleep(for: .seconds(0.03))
         store.send(.cancel)
         await task?.value
-        store.saveSessionTraceIfNeeded()
 
-        let collection = try SessionTraceCollection.load(from: logURL)
+        let collection = try await collectionTask.value
         let graph = collection.sessionGraph
         let effectNodes = graph.nodes.compactMap { node -> SessionGraph.EffectNode? in
             guard case .effect(let value) = node else { return nil }
@@ -321,19 +286,13 @@ extension SessionTraceTests.SessionGraphTests {
     }
 
     @Test
-    func effectNoneDoesNotCreateEffectNode() throws {
-        let title = "session-graph-effect-none-\(UUID().uuidString)"
-        let logURL = try sessionTraceFileURL(title: title)
-        defer { try? FileManager.default.removeItem(at: logURL) }
-
+    func effectNoneDoesNotCreateEffectNode() async throws {
         let store = SessionGraphHarnessNsp.store()
-        store.logConfig.saveSessionTrace = true
-        store.logConfig.sessionTraceFilename = title
+        let collectionTask = liveTraceCollectionTask(for: store)
 
         store.send(.effect(.none))
-        store.saveSessionTraceIfNeeded()
 
-        let collection = try SessionTraceCollection.load(from: logURL)
+        let collection = try await collectionTask.value
         let effectNodes = collection.sessionGraph.nodes.compactMap { node -> SessionGraph.EffectNode? in
             guard case .effect(let value) = node else { return nil }
             return value
@@ -342,20 +301,14 @@ extension SessionTraceTests.SessionGraphTests {
     }
 
     @Test
-    func actionSourcesDoNotUseSystemSource() throws {
-        let title = "session-graph-no-system-source-\(UUID().uuidString)"
-        let logURL = try sessionTraceFileURL(title: title)
-        defer { try? FileManager.default.removeItem(at: logURL) }
-
+    func actionSourcesDoNotUseSystemSource() async throws {
         let store = SessionGraphHarnessNsp.store()
-        store.logConfig.saveSessionTrace = true
-        store.logConfig.sessionTraceFilename = title
+        let collectionTask = liveTraceCollectionTask(for: store)
 
         store.send(.mutating(.fanOut([1, 2])))
         _ = store.send(.effect(.emitActions([3, 4])))
-        store.saveSessionTraceIfNeeded()
 
-        let collection = try SessionTraceCollection.load(from: logURL)
+        let collection = try await collectionTask.value
         let actionNodes = collection.sessionGraph.nodes.compactMap { node -> SessionGraph.ActionNode? in
             guard case .action(let value) = node else { return nil }
             return value
@@ -368,16 +321,24 @@ extension SessionTraceTests.SessionGraphTests {
         })
     }
 
-    private func sessionTraceFileURL(title: String) throws -> URL {
-        let root = try FileManager.default.url(
-            for: .cachesDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: false
-        )
-        return root
-            .appendingPathComponent("ReducerLogs")
-            .appendingPathComponent("\(title)", conformingTo: .data)
-            .appendingPathExtension("lzma")
+    @Test
+    func liveTraceAccumulatorBuildsCollectionFromPatches() async throws {
+        let store = SessionGraphHarnessNsp.store()
+        let collectionTask = liveTraceCollectionTask(for: store)
+
+        store.send(.mutating(.append(1)))
+
+        let collection = try await collectionTask.value
+        let actionNodes = collection.sessionGraph.nodes.compactMap { node -> SessionGraph.ActionNode? in
+            guard case .action(let value) = node else { return nil }
+            return value
+        }
+        let stateResultEdges = collection.sessionGraph.edges.compactMap { edge -> SessionGraph.StateResultEdge? in
+            guard case .stateResult(let value) = edge else { return nil }
+            return value
+        }
+
+        #expect(actionNodes.contains { $0.completedAt != nil })
+        #expect(!stateResultEdges.isEmpty)
     }
 }
