@@ -228,16 +228,17 @@ extension StateStoreTests.StateStoreCoverageGapTests {
         #expect(nonStoreChild == nil)
     }
 
-    // Enable in-process live trace handling.
-    // Expect tracing can be enabled without network config.
+    // Disable network recording and enable an in-process live trace handler.
+    // Expect the shared live-trace config can record locally without TCP output.
     @Test
-    func enablingLiveTraceHandlerKeepsNetworkTracingDisabled() {
-        var logConfig = NestedTaskGapNsp.Store.LogConfig()
+    func liveTraceConfigCanUseEnvelopeHandlerWithoutNetwork() {
+        let config = LiveTraceConfig(
+            networkEnabled: false,
+            envelopeHandler: { _ in }
+        )
 
-        logConfig.liveTraceHandler = { _ in }
-
-        #expect(logConfig.liveTrace == nil)
-        #expect(logConfig.liveTraceHandler != nil)
+        #expect(!config.networkEnabled)
+        #expect(config.envelopeHandler != nil)
     }
 
     // MARK: - Effect Execution

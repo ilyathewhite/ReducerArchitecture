@@ -29,7 +29,7 @@ private struct LegacyStoredSession: Codable {
     let entries: [Entry]
 }
 
-public struct SessionTraceCollection: Codable {
+public struct SessionTraceCollection: Codable, Equatable, Sendable {
     public let title: String
     public let sessionGraph: SessionGraph
 

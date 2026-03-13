@@ -11,7 +11,7 @@ import Tagged
 /// `StateStore` instance was active. Nodes describe observed entities such as actions, mutations,
 /// effects, batches, and state snapshots. Edges describe why those nodes exist and how control
 /// and data moved between them.
-public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
+public struct SessionGraph: Codable, Equatable, Sendable {
     public enum StoreInstanceIDTag {}
     /// Identifies one traced store instance within a session graph.
     public typealias StoreInstanceID = Tagged<StoreInstanceIDTag, String>
@@ -71,7 +71,7 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     }
 
     /// Type-erased wrapper around every node kind that can appear in a trace.
-    public enum Node: Codable, Equatable {
+    public enum Node: Codable, Equatable, Sendable {
         case state(StateNode)
         case action(ActionNode)
         case mutation(MutationNode)
@@ -120,7 +120,7 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     ///
     /// State nodes anchor mutating actions: a mutating action consumes one state via
     /// `StateInputEdge` and produces the next state via `StateResultEdge`.
-    public struct StateNode: Codable, Equatable, Identifiable {
+    public struct StateNode: Codable, Equatable, Identifiable, Sendable {
         /// Unique id of this state snapshot within the session.
         public let id: StateID
         /// Global order in which the snapshot was recorded.
@@ -141,8 +141,8 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     ///
     /// This includes user sends, reducer-produced sends, effect emissions, publish/cancel
     /// actions, and even `.none` when the runtime chooses to represent it.
-    public struct ActionNode: Codable, Equatable, Identifiable {
-        public enum Kind: String, Codable {
+    public struct ActionNode: Codable, Equatable, Identifiable, Sendable {
+        public enum Kind: String, Codable, Sendable {
             /// A synchronous state-changing reducer action.
             case mutating
             /// An action that asks `runEffect` to produce an `Effect`.
@@ -156,7 +156,7 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
         }
 
         /// Describes the immediate causal source recorded for an action node.
-        public enum Source: Codable, Equatable {
+        public enum Source: Codable, Equatable, Sendable {
             /// The action entered the store through the public user-facing `send` API.
             case user
             /// The action was emitted by an effect node that was already started.
@@ -168,7 +168,7 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
         }
 
         /// Source file/line captured for the send that created this action.
-        public struct CallSite: Codable, Equatable {
+        public struct CallSite: Codable, Equatable, Sendable {
             /// File passed through the runtime for this send.
             public let file: String
             /// Line passed through the runtime for this send.
@@ -230,9 +230,9 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     ///
     /// Mutation nodes exist alongside action nodes so traces can separately show the action that
     /// requested a state change and the actual before/after diff that resulted.
-    public struct MutationNode: Codable, Equatable, Identifiable {
+    public struct MutationNode: Codable, Equatable, Identifiable, Sendable {
         /// Per-property diff extracted from a mutation's before/after snapshots.
-        public struct PropertyDiff: Codable, Equatable {
+        public struct PropertyDiff: Codable, Equatable, Sendable {
             /// Name of the state property whose stringified value changed.
             public let property: String
             /// Property value before the mutation, or `nil` if the property was absent.
@@ -266,8 +266,8 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     /// Effect nodes represent scheduled work rather than emitted actions themselves. Later edges
     /// such as `StartedEffectEdge` and `EmittedActionEdge` tie the effect to the action that
     /// created it and the actions/batches it emitted.
-    public struct EffectNode: Codable, Equatable, Identifiable {
-        public enum Kind: String, Codable {
+    public struct EffectNode: Codable, Equatable, Identifiable, Sendable {
+        public enum Kind: String, Codable, Sendable {
             /// `.action`
             case action
             /// `.actions`
@@ -289,7 +289,7 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
         }
 
         /// Lifecycle state of a started effect node.
-        public enum Lifecycle: String, Codable {
+        public enum Lifecycle: String, Codable, Sendable {
             /// The effect has started and has not yet been finished/cancelled.
             case started
             /// The effect completed normally.
@@ -347,8 +347,8 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     /// Batch nodes collapse "many children from one source" into one causal wrapper so viewers can
     /// show a single predecessor edge from the source to the batch, then ordered containment edges
     /// from the batch to each emitted action.
-    public struct BatchNode: Codable, Equatable, Identifiable {
-        public enum Kind: String, Codable {
+    public struct BatchNode: Codable, Equatable, Identifiable, Sendable {
+        public enum Kind: String, Codable, Sendable {
             /// Multiple actions returned synchronously from reducer output.
             case syncFanOut
             /// Multiple actions emitted synchronously by an effect.
@@ -375,7 +375,7 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     }
 
     /// Type-erased wrapper around every edge kind that can appear in a trace.
-    public enum Edge: Codable, Equatable {
+    public enum Edge: Codable, Equatable, Sendable {
         case stateInput(StateInputEdge)
         case stateResult(StateResultEdge)
         case applied(AppliedEdge)
@@ -411,7 +411,7 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     }
 
     /// Connects a mutating action to the state snapshot it consumed.
-    public struct StateInputEdge: Codable, Equatable {
+    public struct StateInputEdge: Codable, Equatable, Sendable {
         /// Global order in which the edge was recorded.
         public let order: Int
         /// State snapshot that was current when the mutating action started.
@@ -421,7 +421,7 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     }
 
     /// Connects a mutating action to the state snapshot it produced.
-    public struct StateResultEdge: Codable, Equatable {
+    public struct StateResultEdge: Codable, Equatable, Sendable {
         /// Global order in which the edge was recorded.
         public let order: Int
         /// Mutating action that produced the result state.
@@ -431,7 +431,7 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     }
 
     /// Connects an action node to its mutation node.
-    public struct AppliedEdge: Codable, Equatable {
+    public struct AppliedEdge: Codable, Equatable, Sendable {
         /// Global order in which the edge was recorded.
         public let order: Int
         /// Action that caused the mutation.
@@ -441,7 +441,7 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     }
 
     /// Connects an action node to an effect node it started.
-    public struct StartedEffectEdge: Codable, Equatable {
+    public struct StartedEffectEdge: Codable, Equatable, Sendable {
         /// Global order in which the edge was recorded.
         public let order: Int
         /// Action that returned the effect.
@@ -454,7 +454,7 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     ///
     /// `nodeID` may point to either an `ActionNode` or a `BatchNode`. When a batch wrapper exists,
     /// the edge targets the batch rather than each individual action.
-    public struct EmittedActionEdge: Codable, Equatable {
+    public struct EmittedActionEdge: Codable, Equatable, Sendable {
         /// Global order in which the edge was recorded.
         public let order: Int
         /// Effect responsible for the emission.
@@ -471,7 +471,7 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     /// Connects an action to another node it produced synchronously.
     ///
     /// Like `EmittedActionEdge`, `nodeID` may point to either an `ActionNode` or a `BatchNode`.
-    public struct ProducedActionEdge: Codable, Equatable {
+    public struct ProducedActionEdge: Codable, Equatable, Sendable {
         /// Global order in which the edge was recorded.
         public let order: Int
         /// Action responsible for producing the node.
@@ -483,7 +483,7 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     }
 
     /// Connects a batch node to one node contained in that batch.
-    public struct ContainsEdge: Codable, Equatable {
+    public struct ContainsEdge: Codable, Equatable, Sendable {
         /// Global order in which the edge was recorded.
         public let order: Int
         /// Batch that owns the emitted node.
@@ -501,7 +501,7 @@ public struct SessionGraph: Codable, Equatable, @unchecked Sendable {
     ///
     /// This is structural rather than causal: it records stack nesting when the store receives
     /// new work before the parent action finishes.
-    public struct NestedEdge: Codable, Equatable {
+    public struct NestedEdge: Codable, Equatable, Sendable {
         /// Global order in which the edge was recorded.
         public let order: Int
         /// Parent action or batch node that was active when the child node was created.
@@ -551,11 +551,14 @@ final class SessionGraphRecorder {
         self.sink = .init()
     }
 
-    func setLiveClient(_ liveClient: SessionTraceLiveClient?) {
-        enqueue([.setLiveClient(liveClient)])
+    func setLiveClient(
+        _ liveClient: LiveTraceClient?,
+        metadata: LiveTraceStoreMetadata?
+    ) {
+        enqueue([.setLiveClient(liveClient, metadata)])
     }
 
-    func setLiveHandler(_ liveHandler: SessionTraceLiveHandler?) {
+    func setLiveHandler(_ liveHandler: LiveTraceHandler?) {
         enqueue([.setLiveHandler(liveHandler)])
     }
 
@@ -1075,33 +1078,52 @@ final class SessionGraphRecorder {
     }
 }
 
-private enum SessionGraphRecorderOperation: @unchecked Sendable {
-    case setLiveClient(SessionTraceLiveClient?)
-    case setLiveHandler(SessionTraceLiveHandler?)
+private enum SessionGraphRecorderOperation: Sendable {
+    case setLiveClient(LiveTraceClient?, LiveTraceStoreMetadata?)
+    case setLiveHandler(LiveTraceHandler?)
     case upsertNode(SessionGraph.Node)
     case appendEdge(SessionGraph.Edge)
 }
 
 private actor SessionGraphRecorderActor {
-    private var liveClient: SessionTraceLiveClient?
-    private var liveHandler: SessionTraceLiveHandler?
+    private var liveClient: LiveTraceClient?
+    private var liveClientMetadata: LiveTraceStoreMetadata?
+    private var liveHandler: LiveTraceHandler?
 
-    func apply(_ operations: [SessionGraphRecorderOperation]) {
+    func apply(_ operations: [SessionGraphRecorderOperation]) async {
         for operation in operations {
             switch operation {
-            case .setLiveClient(let liveClient):
+            case .setLiveClient(let liveClient, let metadata):
                 self.liveClient = liveClient
+                self.liveClientMetadata = metadata
+                if let liveClient, let metadata {
+                    await liveClient.updateStoreMetadata(metadata)
+                }
 
             case .setLiveHandler(let liveHandler):
                 self.liveHandler = liveHandler
 
             case .upsertNode(let node):
-                liveClient?.record(.upsertNode(node))
-                liveHandler?.record(.upsertNode(node))
+                if let liveClient, let liveClientMetadata {
+                    await liveClient.record(
+                        .upsertNode(node),
+                        metadata: liveClientMetadata
+                    )
+                }
+                if let liveHandler {
+                    liveHandler.record(.upsertNode(node))
+                }
 
             case .appendEdge(let edge):
-                liveClient?.record(.appendEdge(edge))
-                liveHandler?.record(.appendEdge(edge))
+                if let liveClient, let liveClientMetadata {
+                    await liveClient.record(
+                        .appendEdge(edge),
+                        metadata: liveClientMetadata
+                    )
+                }
+                if let liveHandler {
+                    liveHandler.record(.appendEdge(edge))
+                }
             }
         }
     }

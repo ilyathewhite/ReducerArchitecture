@@ -5,10 +5,8 @@ import Foundation
 func liveTraceCollectionTask<Nsp: StoreNamespace>(
     for store: Nsp.Store
 ) -> Task<SessionTraceCollection, Error> {
-    let collector = SessionTraceEnvelopeCollector()
-    store.logConfig.liveTraceHandler = { envelope in
-        collector.receive(envelope)
-    }
+    let collector = LiveTraceEnvelopeCollector()
+    configureLiveTraceForTests(store: store, collector: collector)
     return Task {
         try await collector.waitForFirstStableCollection()
     }
@@ -17,21 +15,48 @@ func liveTraceCollectionTask<Nsp: StoreNamespace>(
 @MainActor
 func liveTraceEnvelopeCollector<Nsp: StoreNamespace>(
     for store: Nsp.Store
-) -> SessionTraceEnvelopeCollector {
-    let collector = SessionTraceEnvelopeCollector()
-    store.logConfig.liveTraceHandler = { envelope in
-        collector.receive(envelope)
-    }
+) -> LiveTraceEnvelopeCollector {
+    let collector = LiveTraceEnvelopeCollector()
+    configureLiveTraceForTests(store: store, collector: collector)
     return collector
 }
 
-final class SessionTraceEnvelopeCollector: @unchecked Sendable {
+@MainActor
+private func configureLiveTraceForTests<Nsp: StoreNamespace>(
+    store: Nsp.Store,
+    collector: LiveTraceEnvelopeCollector
+) {
+    let originalConfig = LiveTraceConfig.shared
+    collector.setOriginalConfig(originalConfig)
+
+    var config = originalConfig
+    config.networkEnabled = false
+    config.envelopeHandler = { [weak collector] envelope in
+        collector?.receive(envelope)
+    }
+    LiveTraceConfig.shared = config
+    store.logConfig.liveTraceEnabled = true
+}
+
+final class LiveTraceEnvelopeCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var sessionOrder: [String] = []
-    private var accumulators: [String: SessionTraceLiveAccumulator] = [:]
-    private var endedSessionIDs: Set<String> = []
+    private var accumulators: [String: LiveTraceSessionAccumulator] = [:]
+    private var originalConfig: LiveTraceConfig?
 
-    func receive(_ envelope: SessionTraceLiveEnvelope) {
+    @MainActor
+    func setOriginalConfig(_ config: LiveTraceConfig) {
+        originalConfig = config
+    }
+
+    deinit {
+        guard let originalConfig else { return }
+        Task { @MainActor in
+            LiveTraceConfig.shared = originalConfig
+        }
+    }
+
+    func receive(_ envelope: LiveTraceEnvelope) {
         lock.lock()
         defer { lock.unlock() }
 
@@ -44,24 +69,36 @@ final class SessionTraceEnvelopeCollector: @unchecked Sendable {
         }()
         accumulator.apply(envelope)
         accumulators[envelope.sessionID] = accumulator
-        if envelope.kind == .end {
-            endedSessionIDs.insert(envelope.sessionID)
-        }
     }
 
     func waitForFirstStableCollection(
         timeout: Duration = .seconds(1)
     ) async throws -> SessionTraceCollection {
+        let session = try await waitForFirstStableSession(timeout: timeout)
+        guard let collection = session.firstStoreTrace?.traceCollection else {
+            throw NSError(
+                domain: "ReducerArchitectureTests",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for live trace collection."]
+            )
+        }
+        return collection
+    }
+
+    func waitForFirstStableSession(
+        timeout: Duration = .seconds(1),
+        where predicate: (TraceSession) -> Bool = { _ in true }
+    ) async throws -> TraceSession {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
         var lastSignature: (Int, Int)?
         var stableSamples = 0
 
         while clock.now < deadline {
-            if let collection = firstCollection() {
+            if let session = firstSession() {
                 let signature = (
-                    collection.sessionGraph.nodes.count,
-                    collection.sessionGraph.edges.count
+                    session.storeTraces.reduce(0) { $0 + $1.traceCollection.sessionGraph.nodes.count },
+                    session.storeTraces.reduce(0) { $0 + $1.traceCollection.sessionGraph.edges.count }
                 )
                 if signature.0 > 0 {
                     if lastSignature?.0 == signature.0 && lastSignature?.1 == signature.1 {
@@ -72,8 +109,8 @@ final class SessionTraceEnvelopeCollector: @unchecked Sendable {
                         stableSamples = 0
                     }
 
-                    if stableSamples >= 3 {
-                        return collection
+                    if stableSamples >= 3 && predicate(session) {
+                        return session
                     }
                 }
             }
@@ -88,27 +125,11 @@ final class SessionTraceEnvelopeCollector: @unchecked Sendable {
         )
     }
 
-    func waitForEnd(
-        timeout: Duration = .seconds(1)
-    ) async throws {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: timeout)
-
-        while clock.now < deadline {
-            if hasEndedFirstSession() {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-
-        throw NSError(
-            domain: "ReducerArchitectureTests",
-            code: 2,
-            userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for live trace end envelope."]
-        )
+    private func firstCollection() -> SessionTraceCollection? {
+        firstSession()?.firstStoreTrace?.traceCollection
     }
 
-    private func firstCollection() -> SessionTraceCollection? {
+    private func firstSession() -> TraceSession? {
         lock.lock()
         defer { lock.unlock() }
 
@@ -116,14 +137,6 @@ final class SessionTraceEnvelopeCollector: @unchecked Sendable {
               let accumulator = accumulators[sessionID] else {
             return nil
         }
-        return accumulator.traceCollection
-    }
-
-    private func hasEndedFirstSession() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard let sessionID = sessionOrder.first else { return false }
-        return endedSessionIDs.contains(sessionID)
+        return accumulator.session
     }
 }

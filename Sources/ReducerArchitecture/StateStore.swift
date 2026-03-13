@@ -227,9 +227,8 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     /// The recorder is created on first traced action/effect and reused across subsequent sends
     /// so ids, open actions, open effects, and batch sequencing stay stable for the session.
     var sessionGraphRecorder: SessionGraphRecorder?
-    var sessionTraceLiveMetadata: SessionTraceLiveSessionMetadata?
-    var sessionTraceLiveClient: SessionTraceLiveClient?
-    var sessionTraceLiveHandler: SessionTraceLiveHandler?
+    var liveTraceMetadata: LiveTraceStoreMetadata?
+    var liveTraceHandler: LiveTraceHandler?
 
     @Published public private(set) var state: State
     public private(set) var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
@@ -244,9 +243,8 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     public init(_ initialValue: State, env: Environment?) {
         self.name = Self.storeDefaultKey
         self.sessionGraphRecorder = nil
-        self.sessionTraceLiveMetadata = nil
-        self.sessionTraceLiveClient = nil
-        self.sessionTraceLiveHandler = nil
+        self.liveTraceMetadata = nil
+        self.liveTraceHandler = nil
         self.state = initialValue
         self.environment = env
 
@@ -260,8 +258,11 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     }
     
     deinit {
-        sessionTraceLiveClient?.endSession()
-        sessionTraceLiveHandler?.endSession()
+        Self.notifyLiveTraceStoreEndedOnDeinit(
+            metadata: liveTraceMetadata,
+            handler: liveTraceHandler,
+            logger: logConfig.logger
+        )
 
         if storeLifecycleLog.enabled {
             let name = Self.storeDefaultKey
@@ -617,7 +618,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         line: Int? = #line
     ) -> Task<Void, Never>? {
         apply(anim) { () -> Task<Void, Never>? in
-            sessionTraceSyncLiveOutputsIfNeeded()
+            syncLiveTraceOutputsIfNeeded()
             guard !isCancelled else {
                 switch storeAction.action {
                 case .cancel:
@@ -884,13 +885,9 @@ extension StateStore {
         public var logState = false
         public var logActions = false
         public var logActionCallSite = false
-        /// Streams live trace updates to a remote viewer with a bounded sender-side patch buffer.
-        public var liveTrace: SessionTraceLiveConfig? = nil
-        /// Mirrors the same live-trace envelopes to an in-process receiver.
-        ///
-        /// This is useful for tests and tools that want the exact live-trace payloads without
-        /// routing them through a TCP listener.
-        public var liveTraceHandler: (@Sendable (SessionTraceLiveEnvelope) -> Void)?
+        /// Opts this store into the shared app-run live-trace session configured by
+        /// `LiveTraceConfig.shared`.
+        public var liveTraceEnabled = false
 
         public var logEnabled: Bool {
             logState || logActions || logActionCallSite

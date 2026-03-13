@@ -9,6 +9,106 @@ import os
 import SwiftUI
 #endif
 
+private func normalizedSessionTraceValue(_ value: String?) -> String? {
+    guard let value else { return nil }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}
+
+@MainActor
+private final class SharedTraceSessionManager {
+    static let shared = SharedTraceSessionManager()
+
+    private var sharedSessionID: String?
+    private var sharedTitle: String?
+    private var sharedNetworkClient: LiveTraceClient?
+    private var sharedNetworkHost: String?
+    private var sharedNetworkPort: UInt16?
+    private var sharedNetworkReconnectDelay: TimeInterval?
+    private var sharedNetworkPatchBufferCapacity: Int?
+
+    private init() {}
+
+    func liveConfig() -> LiveTraceConfig {
+        LiveTraceConfig.shared
+    }
+
+    func sessionID() -> String {
+        if let sharedSessionID {
+            return sharedSessionID
+        }
+        if let configuredSessionID = normalizedSessionTraceValue(liveConfig().sessionID) {
+            sharedSessionID = configuredSessionID
+            return configuredSessionID
+        }
+
+        let processName = ProcessInfo.processInfo.processName
+            .replacingOccurrences(of: " ", with: "-")
+            .lowercased()
+        let generatedSessionID = "\(processName).session.\(UUID().uuidString.lowercased())"
+        sharedSessionID = generatedSessionID
+        return generatedSessionID
+    }
+
+    func sessionTitle() -> String {
+        if let configuredTitle = normalizedSessionTraceValue(liveConfig().sessionTitle) {
+            sharedTitle = configuredTitle
+            return configuredTitle
+        }
+        if let sharedTitle {
+            return sharedTitle
+        }
+
+        let defaultTitle = ProcessInfo.processInfo.processName
+        sharedTitle = defaultTitle
+        return defaultTitle
+    }
+
+    func networkClient(logger: Logger) -> LiveTraceClient? {
+        let config = liveConfig()
+        guard config.networkEnabled else {
+            stopNetworkClientIfNeeded()
+            return nil
+        }
+
+        if let sharedNetworkClient,
+           sharedNetworkHost == config.host,
+           sharedNetworkPort == config.port,
+           sharedNetworkReconnectDelay == config.reconnectDelay,
+           sharedNetworkPatchBufferCapacity == config.patchBufferCapacity {
+            return sharedNetworkClient
+        }
+
+        let previousClient = sharedNetworkClient
+        let nextClient = LiveTraceClient(
+            sessionID: sessionID(),
+            config: config,
+            logger: logger
+        )
+        sharedNetworkClient = nextClient
+        sharedNetworkHost = config.host
+        sharedNetworkPort = config.port
+        sharedNetworkReconnectDelay = config.reconnectDelay
+        sharedNetworkPatchBufferCapacity = config.patchBufferCapacity
+        Task {
+            await previousClient?.stop()
+        }
+        return nextClient
+    }
+
+    func stopNetworkClientIfNeeded() {
+        let previousClient = sharedNetworkClient
+        sharedNetworkClient = nil
+        sharedNetworkHost = nil
+        sharedNetworkPort = nil
+        sharedNetworkReconnectDelay = nil
+        sharedNetworkPatchBufferCapacity = nil
+        Task {
+            await previousClient?.stop()
+        }
+    }
+}
+
 @MainActor
 private var sessionTraceStoreInstanceCounter = 0
 
@@ -18,34 +118,31 @@ private func nextSessionTraceStoreInstanceID(storeDefaultKey: String) -> Session
     return .init(rawValue: "\(storeDefaultKey).s\(sessionTraceStoreInstanceCounter)")
 }
 
-final class SessionTraceLiveHandler: @unchecked Sendable {
-    private let metadata: SessionTraceLiveSessionMetadata
-    private let handler: @Sendable (SessionTraceLiveEnvelope) -> Void
-    private var hasEnded = false
+struct LiveTraceHandler: Sendable {
+    private let metadata: LiveTraceStoreMetadata
+    private let handler: @Sendable (LiveTraceEnvelope) -> Void
 
     init(
-        metadata: SessionTraceLiveSessionMetadata,
-        handler: @escaping @Sendable (SessionTraceLiveEnvelope) -> Void
+        metadata: LiveTraceStoreMetadata,
+        handler: @escaping @Sendable (LiveTraceEnvelope) -> Void
     ) {
         self.metadata = metadata
         self.handler = handler
         handler(.hello(metadata))
     }
 
-    func record(_ patch: SessionTraceLivePatch) {
-        guard !hasEnded else { return }
+    func sendStoreMetadata(_ metadata: LiveTraceStoreMetadata) {
+        handler(.hello(metadata))
+    }
+
+    func record(_ patch: LiveTracePatch) {
         handler(
             .patch(
                 sessionID: metadata.sessionID,
+                storeInstanceID: metadata.storeInstanceID,
                 patch: patch
             )
         )
-    }
-
-    func endSession() {
-        guard !hasEnded else { return }
-        hasEnded = true
-        handler(.end(sessionID: metadata.sessionID))
     }
 }
 
@@ -294,7 +391,8 @@ extension StateStore {
     @inline(__always)
     /// Returns `true` when this store should trace session graph events.
     var isSessionGraphTracingEnabled: Bool {
-        logConfig.liveTrace != nil || logConfig.liveTraceHandler != nil
+        guard logConfig.liveTraceEnabled else { return false }
+        return SharedTraceSessionManager.shared.liveConfig().hasOutputs
     }
 
     @inline(__always)
@@ -304,91 +402,104 @@ extension StateStore {
             return nil
         }
         let recorder = sessionGraphRecorder ?? sessionTraceEnsureRecorder()
-        sessionTraceAttachLiveOutputsIfNeeded(to: recorder)
+        attachLiveTraceOutputsIfNeeded(to: recorder)
         return recorder
     }
 
-    func resolvedSessionTraceTitle() -> String {
-        logConfig.liveTrace?.title ?? name
+    func resolvedTraceSessionTitle() -> String {
+        SharedTraceSessionManager.shared.sessionTitle()
     }
 
-    func sessionTraceMetadata(for recorder: SessionGraphRecorder) -> SessionTraceLiveSessionMetadata {
-        if let sessionTraceLiveMetadata {
-            return sessionTraceLiveMetadata
-        }
-
-        let metadata = SessionTraceLiveSessionMetadata(
-            sessionID: recorder.storeInstanceID.rawValue,
-            title: resolvedSessionTraceTitle(),
+    func resolvedLiveTraceMetadata(for recorder: SessionGraphRecorder) -> LiveTraceStoreMetadata {
+        let metadata = LiveTraceStoreMetadata(
+            sessionID: SharedTraceSessionManager.shared.sessionID(),
+            storeInstanceID: recorder.storeInstanceID.rawValue,
+            title: resolvedTraceSessionTitle(),
             storeName: name,
             hostName: ProcessInfo.processInfo.hostName,
             processName: ProcessInfo.processInfo.processName,
-            startedAt: .now
+            startedAt: liveTraceMetadata?.startedAt ?? .now,
+            endedAt: nil
         )
-        sessionTraceLiveMetadata = metadata
+        liveTraceMetadata = metadata
         return metadata
     }
 
-    func sessionTraceAttachLiveOutputsIfNeeded(to recorder: SessionGraphRecorder) {
-        let metadata = sessionTraceMetadata(for: recorder)
+    func attachLiveTraceOutputsIfNeeded(to recorder: SessionGraphRecorder) {
+        let metadata = resolvedLiveTraceMetadata(for: recorder)
+        let liveTraceConfig = SharedTraceSessionManager.shared.liveConfig()
 
-        if let liveTraceConfig = logConfig.liveTrace {
-            if sessionTraceLiveClient == nil {
-                sessionTraceLiveClient = SessionTraceLiveClient(
-                    sessionID: metadata.sessionID,
-                    config: liveTraceConfig,
-                    metadata: metadata,
-                    logger: logConfig.logger
-                )
-            }
-            recorder.setLiveClient(sessionTraceLiveClient)
+        if logConfig.liveTraceEnabled, liveTraceConfig.networkEnabled {
+            recorder.setLiveClient(
+                SharedTraceSessionManager.shared.networkClient(logger: logConfig.logger),
+                metadata: metadata
+            )
         }
         else {
-            recorder.setLiveClient(nil)
-            sessionTraceLiveClient?.endSession()
-            sessionTraceLiveClient = nil
+            recorder.setLiveClient(nil, metadata: nil)
+            if !liveTraceConfig.networkEnabled {
+                SharedTraceSessionManager.shared.stopNetworkClientIfNeeded()
+            }
         }
 
-        if let liveTraceHandler = logConfig.liveTraceHandler {
-            if sessionTraceLiveHandler == nil {
-                sessionTraceLiveHandler = SessionTraceLiveHandler(
+        if logConfig.liveTraceEnabled, let envelopeHandler = liveTraceConfig.envelopeHandler {
+            if liveTraceHandler == nil {
+                liveTraceHandler = LiveTraceHandler(
                     metadata: metadata,
-                    handler: liveTraceHandler
+                    handler: envelopeHandler
                 )
             }
-            recorder.setLiveHandler(sessionTraceLiveHandler)
+            recorder.setLiveHandler(liveTraceHandler)
         }
         else {
             recorder.setLiveHandler(nil)
-            sessionTraceLiveHandler?.endSession()
-            sessionTraceLiveHandler = nil
+            liveTraceHandler = nil
         }
     }
 
-    func sessionTraceSyncLiveOutputsIfNeeded() {
+    func syncLiveTraceOutputsIfNeeded() {
         guard isSessionGraphTracingEnabled else {
-            sessionTraceClearLiveOutputsIfNeeded()
+            clearLiveTraceOutputsIfNeeded()
             return
         }
         if let recorder = sessionGraphRecorder {
-            sessionTraceAttachLiveOutputsIfNeeded(to: recorder)
+            attachLiveTraceOutputsIfNeeded(to: recorder)
         }
     }
 
-    func sessionTraceClearLiveOutputsIfNeeded() {
-        guard sessionTraceLiveClient != nil ||
-                sessionTraceLiveHandler != nil ||
-                sessionTraceLiveMetadata != nil else {
+    func clearLiveTraceOutputsIfNeeded() {
+        guard liveTraceHandler != nil ||
+                liveTraceMetadata != nil else {
             return
         }
 
-        sessionGraphRecorder?.setLiveClient(nil)
+        sessionGraphRecorder?.setLiveClient(nil, metadata: nil)
         sessionGraphRecorder?.setLiveHandler(nil)
-        sessionTraceLiveClient?.endSession()
-        sessionTraceLiveClient = nil
-        sessionTraceLiveHandler?.endSession()
-        sessionTraceLiveHandler = nil
-        sessionTraceLiveMetadata = nil
+        liveTraceHandler = nil
+        liveTraceMetadata = nil
+        if !SharedTraceSessionManager.shared.liveConfig().networkEnabled {
+            SharedTraceSessionManager.shared.stopNetworkClientIfNeeded()
+        }
+    }
+
+    nonisolated static func notifyLiveTraceStoreEndedOnDeinit(
+        metadata: LiveTraceStoreMetadata?,
+        handler: LiveTraceHandler?,
+        logger: Logger
+    ) {
+        guard let metadata else { return }
+        guard !metadata.isEnded else { return }
+
+        let endedMetadata = metadata.ended()
+        handler?.sendStoreMetadata(endedMetadata)
+
+        Task { @MainActor in
+            guard SharedTraceSessionManager.shared.liveConfig().networkEnabled else { return }
+            guard let liveClient = SharedTraceSessionManager.shared.networkClient(logger: logger) else {
+                return
+            }
+            await liveClient.updateStoreMetadata(endedMetadata)
+        }
     }
 
     static func sessionTraceEffectDescriptor(for effect: Effect) -> SessionTraceEffectDescriptor {
@@ -516,14 +627,14 @@ extension StateStore {
 
     func sessionTraceEnsureRecorder() -> SessionGraphRecorder {
         if let sessionGraphRecorder {
-            sessionTraceAttachLiveOutputsIfNeeded(to: sessionGraphRecorder)
+            attachLiveTraceOutputsIfNeeded(to: sessionGraphRecorder)
             return sessionGraphRecorder
         }
         let recorder = SessionGraphRecorder(
             storeInstanceID: nextSessionTraceStoreInstanceID(storeDefaultKey: Self.storeDefaultKey)
         )
         sessionGraphRecorder = recorder
-        sessionTraceAttachLiveOutputsIfNeeded(to: recorder)
+        attachLiveTraceOutputsIfNeeded(to: recorder)
         return recorder
     }
 

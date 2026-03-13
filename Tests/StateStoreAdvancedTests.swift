@@ -339,10 +339,10 @@ extension SessionTraceTests {
 }
 
 extension SessionTraceTests.StateStoreSessionTracePersistenceTests {
-    // Stream live trace patches after mutations.
+    // Stream live trace patches after mutations through the shared config handler.
     // Expect accumulated trace reflects the latest state.
     @Test
-    func liveTraceHandlerAccumulatesLatestActionState() async throws {
+    func liveTraceEnvelopeHandlerAccumulatesLatestActionState() async throws {
         let store = EffectHarnessNsp.store()
         let collectionTask = liveTraceCollectionTask(for: store)
 
@@ -354,12 +354,12 @@ extension SessionTraceTests.StateStoreSessionTracePersistenceTests {
         #expect(lastValuesStateString(in: collection) == "[1, 2]")
     }
 
-    // Drop store with live trace handler enabled.
-    // Expect the handler receives an end envelope.
+    // Drop store with shared-config envelope handling enabled.
+    // Expect the accumulated live trace remains available and the final metadata marks the store as ended.
     @Test
-    func deinitEndsLiveTraceSessionWhenHandlerIsEnabled() async throws {
+    func deinitKeepsAccumulatedLiveTraceWhenEnvelopeHandlerIsEnabled() async throws {
         weak var weakStore: EffectHarnessNsp.Store?
-        let collector: SessionTraceEnvelopeCollector
+        let collector: LiveTraceEnvelopeCollector
 
         do {
             let store = EffectHarnessNsp.store()
@@ -370,21 +370,64 @@ extension SessionTraceTests.StateStoreSessionTracePersistenceTests {
         }
 
         #expect(weakStore == nil)
-        try await collector.waitForEnd()
+        let session = try await collector.waitForFirstStableSession(
+            where: { $0.firstStoreTrace?.endedAt != nil }
+        )
+        let collection = try #require(session.firstStoreTrace?.traceCollection)
+        #expect(actionNodes(in: collection).count == 2)
+        #expect(lastValuesStateString(in: collection) == "[7, 8]")
+        #expect(session.firstStoreTrace?.isEnded == true)
+        #expect(session.firstStoreTrace?.endedAt != nil)
     }
 
-    // Enable then disable live trace handling.
-    // Expect the existing live session is ended once tracing is turned off.
+    // Deallocate one traced store while another traced store from the same app run remains alive.
+    // Expect recording continues into the same shared session for the surviving store.
     @Test
-    func disablingLiveTraceHandlerEndsExistingSession() async throws {
+    func deinitOfOneStoreDoesNotStopSharedSessionRecordingForAnotherStore() async throws {
+        weak var weakFirstStore: EffectHarnessNsp.Store?
+        let secondStore = EffectHarnessNsp.store()
+        secondStore.name = "SecondStore"
+
+        let collector: LiveTraceEnvelopeCollector
+
+        do {
+            let firstStore = EffectHarnessNsp.store()
+            firstStore.name = "FirstStore"
+            weakFirstStore = firstStore
+            collector = liveTraceEnvelopeCollector(for: firstStore)
+            secondStore.logConfig.liveTraceEnabled = true
+
+            firstStore.send(.mutating(.append(1)))
+        }
+
+        #expect(weakFirstStore == nil)
+
+        secondStore.send(.mutating(.append(2)))
+
+        let session = try await collector.waitForFirstStableSession()
+        #expect(session.storeTraces.count == 2)
+        #expect(Set(session.storeTraces.map(\.displayName)) == Set(["FirstStore", "SecondStore"]))
+        #expect(
+            session.storeTraces.allSatisfy {
+                !$0.traceCollection.sessionGraph.nodes.isEmpty
+            }
+        )
+    }
+
+    // Disable the shared-config envelope handler after tracing starts.
+    // Expect the existing live trace remains available and no new updates are mirrored.
+    @Test
+    func disablingEnvelopeHandlerStopsFurtherLiveTraceRecording() async throws {
         let store = EffectHarnessNsp.store()
         let collector = liveTraceEnvelopeCollector(for: store)
 
         store.send(.mutating(.append(1)))
-        store.logConfig.liveTraceHandler = nil
+        LiveTraceConfig.shared.envelopeHandler = nil
         store.send(.mutating(.append(2)))
 
-        try await collector.waitForEnd()
+        let collection = try await collector.waitForFirstStableCollection()
+        #expect(actionNodes(in: collection).count == 1)
+        #expect(lastValuesStateString(in: collection) == "[1]")
     }
 }
 

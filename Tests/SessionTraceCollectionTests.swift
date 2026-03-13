@@ -122,10 +122,128 @@ extension SessionTraceTests.SessionTraceCollectionTests {
         #expect(loaded.sessionGraph == graph)
     }
 
-    private func makeSessionGraph() -> SessionGraph {
+    @Test
+    func sessionInitFileDataRoundTripsSingleStoreSession() throws {
+        let collection = SessionTraceCollection(
+            title: "counter-store",
+            sessionGraph: makeSessionGraph(storeInstanceID: "counter.s1")
+        )
+        let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let session = TraceSession(
+            sessionID: "session-a",
+            title: "Example App",
+            hostName: "Host A",
+            processName: "Example App",
+            startedAt: startedAt,
+            storeTraces: [
+                .init(
+                    storeInstanceID: "counter.s1",
+                    storeName: "CounterStore",
+                    hostName: "Host A",
+                    processName: "Example App",
+                    startedAt: startedAt,
+                    traceCollection: collection
+                )
+            ]
+        )
+
+        let fileData = try JSONEncoder().encode(session)
+        let loaded = try TraceSession(fileData: fileData)
+
+        #expect(loaded == session)
+    }
+
+    @Test
+    func liveSessionAccumulatorCollectsMultipleStoreTracesIntoOneSession() {
+        let firstCollection = SessionTraceCollection(
+            title: "CounterStore",
+            sessionGraph: makeSessionGraph(storeInstanceID: "counter.s1")
+        )
+        let secondCollection = SessionTraceCollection(
+            title: "TimerStore",
+            sessionGraph: makeSessionGraph(storeInstanceID: "timer.s2")
+        )
+        let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        var accumulator = LiveTraceSessionAccumulator(
+            title: "Live Trace",
+            sessionID: "session-a"
+        )
+
+        accumulator.apply(
+            .hello(
+                .init(
+                    sessionID: "session-a",
+                    storeInstanceID: "counter.s1",
+                    title: "Example App",
+                    storeName: "CounterStore",
+                    hostName: "Host A",
+                    processName: "Example App",
+                    startedAt: startedAt
+                )
+            )
+        )
+        accumulator.apply(
+            .snapshot(
+                sessionID: "session-a",
+                storeInstanceID: "counter.s1",
+                traceCollection: firstCollection
+            )
+        )
+        accumulator.apply(
+            .hello(
+                .init(
+                    sessionID: "session-a",
+                    storeInstanceID: "timer.s2",
+                    title: "Example App",
+                    storeName: "TimerStore",
+                    hostName: "Host A",
+                    processName: "Example App",
+                    startedAt: startedAt.addingTimeInterval(5)
+                )
+            )
+        )
+        accumulator.apply(
+            .snapshot(
+                sessionID: "session-a",
+                storeInstanceID: "timer.s2",
+                traceCollection: secondCollection
+            )
+        )
+        let secondEndedAt = startedAt.addingTimeInterval(10)
+        accumulator.apply(
+            .hello(
+                .init(
+                    sessionID: "session-a",
+                    storeInstanceID: "timer.s2",
+                    title: "Example App",
+                    storeName: "TimerStore",
+                    hostName: "Host A",
+                    processName: "Example App",
+                    startedAt: startedAt.addingTimeInterval(5),
+                    endedAt: secondEndedAt
+                )
+            )
+        )
+
+        let session = accumulator.session
+
+        #expect(session.title == "Example App")
+        #expect(session.startedAt == startedAt)
+        #expect(session.storeTraces.map(\.id) == ["counter.s1", "timer.s2"])
+        #expect(session.storeTrace(id: "counter.s1")?.traceCollection == firstCollection)
+        #expect(session.storeTrace(id: "timer.s2")?.traceCollection == secondCollection)
+        #expect(session.storeTrace(id: "counter.s1")?.isEnded == false)
+        #expect(session.storeTrace(id: "timer.s2")?.endedAt == secondEndedAt)
+    }
+
+    private func makeSessionGraph(
+        storeInstanceID: String = "store.s1"
+    ) -> SessionGraph {
         let startDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let actionID: SessionGraph.ActionID = .init(rawValue: "\(storeInstanceID).a1")
+        let mutationID: SessionGraph.MutationID = .init(rawValue: "\(storeInstanceID).m1")
         let actionNode = SessionGraph.ActionNode(
-            id: "store.s1.a1",
+            id: actionID,
             order: 1,
             receivedAt: startDate,
             action: "mutating.update",
@@ -141,21 +259,21 @@ extension SessionTraceTests.SessionTraceCollectionTests {
             outputEffect: "none"
         )
         let mutationNode = SessionGraph.MutationNode(
-            id: "store.s1.m1",
+            id: mutationID,
             order: 2,
             appliedAt: startDate.addingTimeInterval(1),
-            actionID: "store.s1.a1",
+            actionID: actionID,
             nestedLevel: 0,
             before: [],
             after: [],
             propertyDiff: []
         )
         return SessionGraph(
-            storeInstanceID: "store.s1",
+            storeInstanceID: .init(rawValue: storeInstanceID),
             nodes: [.action(actionNode), .mutation(mutationNode)],
             edges: [
                 .applied(
-                    .init(order: 3, actionID: "store.s1.a1", mutationID: "store.s1.m1")
+                    .init(order: 3, actionID: actionID, mutationID: mutationID)
                 )
             ]
         )
