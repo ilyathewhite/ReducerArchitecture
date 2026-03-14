@@ -9,6 +9,31 @@ private func normalizedLiveTraceValue(_ value: String?) -> String? {
     return trimmed.isEmpty ? nil : trimmed
 }
 
+private func liveTraceStoreTypeName(from storeInstanceID: String) -> String {
+    if let suffixRange = storeInstanceID.range(of: ".s", options: .backwards) {
+        let suffix = storeInstanceID[suffixRange.upperBound...]
+        if !suffix.isEmpty && suffix.allSatisfy(\.isNumber) {
+            return String(storeInstanceID[..<suffixRange.lowerBound])
+        }
+    }
+    return storeInstanceID
+}
+
+private func liveTraceShortStoreTypeName(from storeInstanceID: String) -> String {
+    let storeTypeName = liveTraceStoreTypeName(from: storeInstanceID)
+    return storeTypeName.split(separator: ".").last.map(String.init) ?? storeTypeName
+}
+
+private func liveTraceStoreNameLooksDefault(
+    _ storeName: String?,
+    storeInstanceID: String
+) -> Bool {
+    guard let normalizedStoreName = normalizedLiveTraceValue(storeName) else { return true }
+    let storeTypeName = liveTraceStoreTypeName(from: storeInstanceID)
+    let shortStoreTypeName = liveTraceShortStoreTypeName(from: storeInstanceID)
+    return normalizedStoreName == storeTypeName || normalizedStoreName == shortStoreTypeName
+}
+
 public enum LiveTraceDefaults {
     public static let defaultHost = "127.0.0.1"
     public static let defaultPort: UInt16 = 38765
@@ -296,7 +321,9 @@ public struct LiveTraceStoreAccumulator: Sendable {
     public mutating func replace(with traceCollection: SessionTraceCollection) {
         guard traceCollection.sessionGraph.storeInstanceID == storeInstanceID else { return }
 
-        title = traceCollection.title
+        if normalizedLiveTraceValue(title) == nil || title == storeInstanceID.rawValue {
+            title = traceCollection.title
+        }
         schemaVersion = traceCollection.sessionGraph.schemaVersion
         nodesByID = Dictionary(
             uniqueKeysWithValues: traceCollection.sessionGraph.nodes.map { ($0.id, $0) }
@@ -387,6 +414,8 @@ public struct LiveTraceSessionAccumulator: Sendable {
     private let sessionID: String
     private var storeOrder: [String]
     private var storesByID: [String: StoreAccumulator]
+    private var autoNameByStoreID: [String: String]
+    private var autoNameCountByStoreType: [String: Int]
 
     public init(
         title: String,
@@ -400,10 +429,14 @@ public struct LiveTraceSessionAccumulator: Sendable {
         self.sessionID = sessionID
         self.storeOrder = []
         self.storesByID = [:]
+        self.autoNameByStoreID = [:]
+        self.autoNameCountByStoreType = [:]
     }
 
     public mutating func apply(metadata: LiveTraceStoreMetadata) {
         guard metadata.sessionID == sessionID else { return }
+
+        let metadata = resolvedMetadata(metadata)
 
         title = metadata.title
         startedAt = startedAt.map { min($0, metadata.startedAt) } ?? metadata.startedAt
@@ -437,6 +470,9 @@ public struct LiveTraceSessionAccumulator: Sendable {
             )
             if let traceCollection = envelope.traceCollection {
                 store.traceAccumulator.replace(with: traceCollection)
+                if let metadata = store.metadata {
+                    store.traceAccumulator.apply(metadata: metadata)
+                }
             }
             store.lastUpdatedAt = .now
             storesByID[envelope.storeInstanceID] = store
@@ -492,6 +528,41 @@ public struct LiveTraceSessionAccumulator: Sendable {
         return .init(
             storeInstanceID: storeInstanceID,
             title: fallbackTitle
+        )
+    }
+
+    private mutating func resolvedMetadata(_ metadata: LiveTraceStoreMetadata) -> LiveTraceStoreMetadata {
+        guard liveTraceStoreNameLooksDefault(metadata.storeName, storeInstanceID: metadata.storeInstanceID) else {
+            return metadata
+        }
+
+        let shortStoreTypeName = liveTraceShortStoreTypeName(from: metadata.storeInstanceID)
+        let resolvedStoreName: String
+        if let existingName = autoNameByStoreID[metadata.storeInstanceID] {
+            resolvedStoreName = existingName
+        }
+        else {
+            let nextIndex = (autoNameCountByStoreType[shortStoreTypeName] ?? 0) + 1
+            autoNameCountByStoreType[shortStoreTypeName] = nextIndex
+            resolvedStoreName =
+                if nextIndex == 1 {
+                    shortStoreTypeName
+                }
+                else {
+                    "\(shortStoreTypeName) \(nextIndex)"
+                }
+            autoNameByStoreID[metadata.storeInstanceID] = resolvedStoreName
+        }
+
+        return .init(
+            sessionID: metadata.sessionID,
+            storeInstanceID: metadata.storeInstanceID,
+            title: metadata.title,
+            storeName: resolvedStoreName,
+            hostName: metadata.hostName,
+            processName: metadata.processName,
+            startedAt: metadata.startedAt,
+            endedAt: metadata.endedAt
         )
     }
 }

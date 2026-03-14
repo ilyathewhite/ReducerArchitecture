@@ -236,6 +236,63 @@ extension SessionTraceTests.SessionTraceCollectionTests {
         #expect(session.storeTrace(id: "timer.s2")?.endedAt == secondEndedAt)
     }
 
+    @Test
+    func liveSessionAccumulatorAssignsNumberedNamesToDefaultStoreTypes() {
+        var accumulator = LiveTraceSessionAccumulator(
+            title: "Live Trace",
+            sessionID: "session-a"
+        )
+        let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+
+        accumulator.apply(
+            .hello(
+                .init(
+                    sessionID: "session-a",
+                    storeInstanceID: "SyncUpList.s1",
+                    title: "Example App",
+                    storeName: "SyncUpList",
+                    hostName: "Host A",
+                    processName: "Example App",
+                    startedAt: startedAt
+                )
+            )
+        )
+        accumulator.apply(
+            .hello(
+                .init(
+                    sessionID: "session-a",
+                    storeInstanceID: "RecordMeeting.s2",
+                    title: "Example App",
+                    storeName: "RecordMeeting",
+                    hostName: "Host A",
+                    processName: "Example App",
+                    startedAt: startedAt.addingTimeInterval(10)
+                )
+            )
+        )
+        accumulator.apply(
+            .hello(
+                .init(
+                    sessionID: "session-a",
+                    storeInstanceID: "RecordMeeting.s3",
+                    title: "Example App",
+                    storeName: "RecordMeeting",
+                    hostName: "Host A",
+                    processName: "Example App",
+                    startedAt: startedAt.addingTimeInterval(20)
+                )
+            )
+        )
+
+        let session = accumulator.session
+
+        #expect(session.storeTraces.map(\.displayName) == [
+            "SyncUpList",
+            "RecordMeeting",
+            "RecordMeeting 2"
+        ])
+    }
+
     private func makeSessionGraph(
         storeInstanceID: String = "store.s1"
     ) -> SessionGraph {

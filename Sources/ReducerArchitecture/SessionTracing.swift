@@ -21,6 +21,7 @@ private final class SharedTraceSessionManager {
 
     private var sharedSessionID: String?
     private var sharedTitle: String?
+    private var autoStoreNameCountByType: [String: Int] = [:]
     private var sharedNetworkClient: LiveTraceClient?
     private var sharedNetworkHost: String?
     private var sharedNetworkPort: UInt16?
@@ -62,6 +63,19 @@ private final class SharedTraceSessionManager {
         let defaultTitle = ProcessInfo.processInfo.processName
         sharedTitle = defaultTitle
         return defaultTitle
+    }
+
+    func nextAutoStoreName(for storeType: String) -> String {
+        let nextCount = (autoStoreNameCountByType[storeType] ?? 0) + 1
+        autoStoreNameCountByType[storeType] = nextCount
+        return nextCount == 1 ? storeType : "\(storeType) \(nextCount)"
+    }
+
+    func reset() {
+        stopNetworkClientIfNeeded()
+        sharedSessionID = nil
+        sharedTitle = nil
+        autoStoreNameCountByType = [:]
     }
 
     func networkClient(logger: Logger) -> LiveTraceClient? {
@@ -116,6 +130,12 @@ private var sessionTraceStoreInstanceCounter = 0
 private func nextSessionTraceStoreInstanceID(storeDefaultKey: String) -> SessionGraph.StoreInstanceID {
     sessionTraceStoreInstanceCounter += 1
     return .init(rawValue: "\(storeDefaultKey).s\(sessionTraceStoreInstanceCounter)")
+}
+
+@MainActor
+func resetLiveTraceRuntimeForTests() {
+    SharedTraceSessionManager.shared.reset()
+    sessionTraceStoreInstanceCounter = 0
 }
 
 struct LiveTraceHandler: Sendable {
@@ -410,12 +430,35 @@ extension StateStore {
         SharedTraceSessionManager.shared.sessionTitle()
     }
 
+    func isDefaultLiveTraceStoreName(_ value: String?) -> Bool {
+        guard let normalizedValue = normalizedSessionTraceValue(value) else { return true }
+        let storeTypeName = Self.storeDefaultKey
+        let shortStoreTypeName = storeTypeName.split(separator: ".").last.map(String.init) ?? storeTypeName
+        return normalizedValue == storeTypeName || normalizedValue == shortStoreTypeName
+    }
+
+    func resolvedLiveTraceStoreName() -> String {
+        if let configuredName = normalizedSessionTraceValue(name),
+           !isDefaultLiveTraceStoreName(configuredName) {
+            return configuredName
+        }
+        if let existingName = normalizedSessionTraceValue(liveTraceMetadata?.storeName) {
+            return existingName
+        }
+
+        let generatedName = SharedTraceSessionManager.shared.nextAutoStoreName(
+            for: Self.storeDefaultKey
+        )
+        name = generatedName
+        return generatedName
+    }
+
     func resolvedLiveTraceMetadata(for recorder: SessionGraphRecorder) -> LiveTraceStoreMetadata {
         let metadata = LiveTraceStoreMetadata(
             sessionID: SharedTraceSessionManager.shared.sessionID(),
             storeInstanceID: recorder.storeInstanceID.rawValue,
             title: resolvedTraceSessionTitle(),
-            storeName: name,
+            storeName: resolvedLiveTraceStoreName(),
             hostName: ProcessInfo.processInfo.hostName,
             processName: ProcessInfo.processInfo.processName,
             startedAt: liveTraceMetadata?.startedAt ?? .now,

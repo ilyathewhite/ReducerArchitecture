@@ -126,6 +126,35 @@ extension PublishedIntSourceNsp {
     }
 }
 
+private enum AutoNamedLiveTraceStoreNsp: StoreNamespace {
+    typealias PublishedValue = Never
+    typealias StoreEnvironment = Never
+    typealias EffectAction = Never
+
+    enum MutatingAction {
+        case increment
+    }
+
+    struct StoreState: Equatable {
+        var count = 0
+    }
+}
+
+extension AutoNamedLiveTraceStoreNsp {
+    @MainActor
+    static func store() -> Store {
+        .init(.init(), env: nil)
+    }
+
+    static func reduce(_ state: inout StoreState, _ action: MutatingAction) -> Store.SyncEffect {
+        switch action {
+        case .increment:
+            state.count += 1
+            return .none
+        }
+    }
+}
+
 extension StateStoreTests {
     @Suite @MainActor struct StateStoreAdvancedTests {}
 }
@@ -412,6 +441,30 @@ extension SessionTraceTests.StateStoreSessionTracePersistenceTests {
                 !$0.traceCollection.sessionGraph.nodes.isEmpty
             }
         )
+    }
+
+    // Start tracing two unnamed stores of the same type.
+    // Expect tracing assigns numbered default names in started order.
+    @Test
+    func liveTraceAssignsNumberedDefaultNamesToUnnamedStores() async throws {
+        let firstStore = AutoNamedLiveTraceStoreNsp.store()
+        let secondStore = AutoNamedLiveTraceStoreNsp.store()
+        let collector = liveTraceEnvelopeCollector(for: firstStore)
+        secondStore.logConfig.liveTraceEnabled = true
+
+        firstStore.send(.mutating(.increment))
+        secondStore.send(.mutating(.increment))
+
+        let session = try await collector.waitForFirstStableSession(
+            where: { $0.storeTraces.count == 2 }
+        )
+
+        #expect(session.storeTraces.map(\.storeName) == [
+            "AutoNamedLiveTraceStoreNsp",
+            "AutoNamedLiveTraceStoreNsp 2"
+        ])
+        #expect(firstStore.name == "AutoNamedLiveTraceStoreNsp")
+        #expect(secondStore.name == "AutoNamedLiveTraceStoreNsp 2")
     }
 
     // Disable the shared-config envelope handler after tracing starts.

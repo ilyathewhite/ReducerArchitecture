@@ -28,6 +28,7 @@ private func configureLiveTraceForTests<Nsp: StoreNamespace>(
 ) {
     let originalConfig = LiveTraceConfig.shared
     collector.setOriginalConfig(originalConfig)
+    resetLiveTraceRuntimeForTests()
 
     var config = originalConfig
     config.networkEnabled = false
