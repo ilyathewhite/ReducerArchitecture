@@ -3,10 +3,11 @@ import Foundation
 
 @MainActor
 func liveTraceCollectionTask<Nsp: StoreNamespace>(
-    for store: Nsp.Store
+    for store: Nsp.Store,
+    mode: LiveTraceMode = .selfOnly
 ) -> Task<SessionTraceCollection, Error> {
     let collector = LiveTraceEnvelopeCollector()
-    configureLiveTraceForTests(store: store, collector: collector)
+    configureLiveTraceForTests(store: store, collector: collector, mode: mode)
     return Task {
         try await collector.waitForFirstStableCollection()
     }
@@ -14,17 +15,19 @@ func liveTraceCollectionTask<Nsp: StoreNamespace>(
 
 @MainActor
 func liveTraceEnvelopeCollector<Nsp: StoreNamespace>(
-    for store: Nsp.Store
+    for store: Nsp.Store,
+    mode: LiveTraceMode = .selfOnly
 ) -> LiveTraceEnvelopeCollector {
     let collector = LiveTraceEnvelopeCollector()
-    configureLiveTraceForTests(store: store, collector: collector)
+    configureLiveTraceForTests(store: store, collector: collector, mode: mode)
     return collector
 }
 
 @MainActor
 private func configureLiveTraceForTests<Nsp: StoreNamespace>(
     store: Nsp.Store,
-    collector: LiveTraceEnvelopeCollector
+    collector: LiveTraceEnvelopeCollector,
+    mode: LiveTraceMode
 ) {
     let originalConfig = LiveTraceConfig.shared
     collector.setOriginalConfig(originalConfig)
@@ -36,7 +39,7 @@ private func configureLiveTraceForTests<Nsp: StoreNamespace>(
         collector?.receive(envelope)
     }
     LiveTraceConfig.shared = config
-    store.logConfig.liveTraceEnabled = true
+    store.logConfig.liveTraceEnabled = mode
 }
 
 final class LiveTraceEnvelopeCollector: @unchecked Sendable {

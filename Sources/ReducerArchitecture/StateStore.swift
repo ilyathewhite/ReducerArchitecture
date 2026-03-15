@@ -63,29 +63,10 @@ where MutatingAction == Void, EffectAction == Never {
     }
 }
 
-/// Logs store allocation, cancellation, and deallocation. The default is `false`.
-public struct StoreLifecycleLog {
-    public var enabled = false
-    public var debug = false
-    public private(set) var lastEvent: [UUID: (name: String, event: String)] = [:]
-    
-    mutating func addEvent(id: UUID, name: String, event: String) {
-        guard !exclude(name) else { return }
-        lastEvent[id] = (name: name, event: event)
-    }
-    
-    mutating func removeEvents(id: UUID) {
-        lastEvent.removeValue(forKey: id)
-    }
-
-    public var exclude: (_ name: String) -> Bool = { name in
-        if name == "NavigationEnvPlaceholder" {
-            return true
-        }
-        return false
-    }
+public enum LiveTraceMode: Equatable, Sendable {
+    case selfOnly
+    case selfAndChildren
 }
-public var storeLifecycleLog = StoreLifecycleLog()
 
 @MainActor
 public protocol AnyStore: BasicViewModel {
@@ -218,7 +199,11 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 
     public var children: [String: any BasicViewModel] = [:]
 
-    public var logConfig = LogConfig()
+    public var logConfig = LogConfig() {
+        didSet {
+            handleLogConfigDidChange(previousConfig: oldValue)
+        }
+    }
     internal var logger: Logger {
         logConfig.logger
     }
@@ -229,6 +214,8 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     var sessionGraphRecorder: SessionGraphRecorder?
     var liveTraceMetadata: LiveTraceStoreMetadata?
     var liveTraceHandler: LiveTraceHandler?
+    var liveTraceParentStoreInstanceID: String?
+    var liveTraceChildKeyInParentStore: String?
 
     @Published public private(set) var state: State
     public private(set) var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
@@ -245,15 +232,15 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         self.sessionGraphRecorder = nil
         self.liveTraceMetadata = nil
         self.liveTraceHandler = nil
+        self.liveTraceParentStoreInstanceID = nil
+        self.liveTraceChildKeyInParentStore = nil
         self.state = initialValue
         self.environment = env
 
-        if storeLifecycleLog.enabled {
-            let name = Self.storeDefaultKey
-            if storeLifecycleLog.debug {
-                logger.debug("Allocated store \(name)\nid: \(self.id)")
-            }
-            storeLifecycleLog.addEvent(id: id, name: name, event: "Allocated")
+        if LiveTraceConfig.shared.traceAllStores {
+            let previousConfig = logConfig
+            logConfig.liveTraceEnabled = .selfAndChildren
+            handleLogConfigDidChange(previousConfig: previousConfig)
         }
     }
     
@@ -263,14 +250,6 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             handler: liveTraceHandler,
             logger: logConfig.logger
         )
-
-        if storeLifecycleLog.enabled {
-            let name = Self.storeDefaultKey
-            if storeLifecycleLog.debug {
-                logConfig.logger.debug("Deallocated store \(name)\nid: \(self.id)")
-            }
-            storeLifecycleLog.removeEvents(id: id)
-        }
     }
 
     private static func consumeActions<Element>(
@@ -733,14 +712,6 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 // don't remove child stores in case a child store view is rendered
                 // after the child store is cancelled
 
-                if storeLifecycleLog.enabled {
-                    let name = Self.storeDefaultKey
-                    if storeLifecycleLog.debug {
-                        logger.debug("Cancelled store \(name)\nid: \(self.id)")
-                    }
-                    storeLifecycleLog.addEvent(id: id, name: name, event: "Cancelled")
-                }
-
             case .none:
                 syncEffect = nil
                 effect = nil
@@ -779,6 +750,32 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     // Adding `file/line` here would not satisfy the protocol requirement.
     public func cancel() {
         send(.cancel)
+    }
+}
+
+public extension StateStore {
+    func addChild<VM: BasicViewModel>(_ child: VM, key: String = VM.viewModelDefaultKey) {
+        addChild(child, key: key) { child, key in
+            self.configureLiveTraceForAddedChildIfNeeded(child, key: key)
+        }
+    }
+
+    func addChildIfNeeded<VM: BasicViewModel>(
+        _ child: @autoclosure () -> VM,
+        key: String = VM.viewModelDefaultKey
+    ) {
+        addChildIfNeeded(child(), key: key) { child, key in
+            self.configureLiveTraceForAddedChildIfNeeded(child, key: key)
+        }
+    }
+
+    func run<VM: BasicViewModel>(
+        _ child: VM,
+        key: String = VM.viewModelDefaultKey
+    ) async throws -> VM.PublishedValue {
+        try await run(child, key: key) { child, key in
+            self.configureLiveTraceForAddedChildIfNeeded(child, key: key)
+        }
     }
 }
 
@@ -887,7 +884,12 @@ extension StateStore {
         public var logActionCallSite = false
         /// Opts this store into the shared app-run live-trace session configured by
         /// `LiveTraceConfig.shared`.
-        public var liveTraceEnabled = false
+        ///
+        /// Set to `nil` to disable live tracing, `.selfOnly` to trace just this store,
+        /// or `.selfAndChildren` to also propagate tracing to child stores added later.
+        /// If `LiveTraceConfig.shared.traceAllStores` is enabled, new stores default to
+        /// `.selfAndChildren` until explicitly overridden.
+        public var liveTraceEnabled: LiveTraceMode? = nil
 
         public var logEnabled: Bool {
             logState || logActions || logActionCallSite

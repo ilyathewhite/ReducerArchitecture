@@ -45,14 +45,17 @@ public struct LiveTraceConfig: Sendable {
     public var networkEnabled: Bool
     public var host: String
     public var port: UInt16
-    public var reconnectDelay: TimeInterval
     public var patchBufferCapacity: Int
     public var envelopeHandler: (@Sendable (LiveTraceEnvelope) -> Void)?
+    /// When enabled, every newly created `StateStore` automatically joins live tracing with
+    /// `.selfAndChildren`, which also preserves parent/child store relationships.
+    public var traceAllStores: Bool
 
     /// Shared per-process configuration for one app-run live-trace session.
     ///
-    /// Configure this once before any traced store starts recording, then opt stores into the
-    /// shared session with `store.logConfig.liveTraceEnabled = true`.
+    /// Configure this once before any traced store starts recording, then either opt stores into
+    /// the shared session with `store.logConfig.liveTraceEnabled` or set `traceAllStores = true`
+    /// to trace all stores created afterwards.
     ///
     /// By default, traced stores stream to the SessionTraceViewer TCP listener. Tests and tools
     /// can disable network recording and install an in-process `envelopeHandler` instead.
@@ -65,18 +68,18 @@ public struct LiveTraceConfig: Sendable {
         networkEnabled: Bool = true,
         host: String = LiveTraceDefaults.defaultHost,
         port: UInt16 = LiveTraceDefaults.defaultPort,
-        reconnectDelay: TimeInterval = 1,
         patchBufferCapacity: Int = 256,
-        envelopeHandler: (@Sendable (LiveTraceEnvelope) -> Void)? = nil
+        envelopeHandler: (@Sendable (LiveTraceEnvelope) -> Void)? = nil,
+        traceAllStores: Bool = false
     ) {
         self.sessionTitle = sessionTitle
         self.sessionID = sessionID
         self.networkEnabled = networkEnabled
         self.host = host
         self.port = port
-        self.reconnectDelay = reconnectDelay
         self.patchBufferCapacity = max(1, patchBufferCapacity)
         self.envelopeHandler = envelopeHandler
+        self.traceAllStores = traceAllStores
     }
 }
 
@@ -90,6 +93,8 @@ public struct TraceSession: Codable, Equatable, Identifiable, Sendable {
     public struct StoreTrace: Codable, Equatable, Identifiable, Sendable {
         public let storeInstanceID: String
         public let storeName: String?
+        public let parentStoreInstanceID: String?
+        public let childKeyInParentStore: String?
         public let hostName: String?
         public let processName: String?
         public let startedAt: Date?
@@ -99,6 +104,8 @@ public struct TraceSession: Codable, Equatable, Identifiable, Sendable {
         public init(
             storeInstanceID: String,
             storeName: String?,
+            parentStoreInstanceID: String? = nil,
+            childKeyInParentStore: String? = nil,
             hostName: String?,
             processName: String?,
             startedAt: Date?,
@@ -107,6 +114,8 @@ public struct TraceSession: Codable, Equatable, Identifiable, Sendable {
         ) {
             self.storeInstanceID = storeInstanceID
             self.storeName = storeName
+            self.parentStoreInstanceID = parentStoreInstanceID
+            self.childKeyInParentStore = childKeyInParentStore
             self.hostName = hostName
             self.processName = processName
             self.startedAt = startedAt
@@ -179,6 +188,8 @@ public struct LiveTraceStoreMetadata: Codable, Equatable, Sendable {
     public let storeInstanceID: String
     public let title: String
     public let storeName: String
+    public let parentStoreInstanceID: String?
+    public let childKeyInParentStore: String?
     public let hostName: String
     public let processName: String
     public let startedAt: Date
@@ -189,6 +200,8 @@ public struct LiveTraceStoreMetadata: Codable, Equatable, Sendable {
         storeInstanceID: String,
         title: String,
         storeName: String,
+        parentStoreInstanceID: String? = nil,
+        childKeyInParentStore: String? = nil,
         hostName: String,
         processName: String,
         startedAt: Date,
@@ -198,6 +211,8 @@ public struct LiveTraceStoreMetadata: Codable, Equatable, Sendable {
         self.storeInstanceID = storeInstanceID
         self.title = title
         self.storeName = storeName
+        self.parentStoreInstanceID = parentStoreInstanceID
+        self.childKeyInParentStore = childKeyInParentStore
         self.hostName = hostName
         self.processName = processName
         self.startedAt = startedAt
@@ -214,6 +229,8 @@ public struct LiveTraceStoreMetadata: Codable, Equatable, Sendable {
             storeInstanceID: storeInstanceID,
             title: title,
             storeName: storeName,
+            parentStoreInstanceID: parentStoreInstanceID,
+            childKeyInParentStore: childKeyInParentStore,
             hostName: hostName,
             processName: processName,
             startedAt: startedAt,
@@ -507,6 +524,8 @@ public struct LiveTraceSessionAccumulator: Sendable {
                 return .init(
                     storeInstanceID: storeInstanceID,
                     storeName: metadata?.storeName,
+                    parentStoreInstanceID: metadata?.parentStoreInstanceID,
+                    childKeyInParentStore: metadata?.childKeyInParentStore,
                     hostName: metadata.flatMap { normalizedLiveTraceValue($0.hostName) } ?? sessionHostName,
                     processName: metadata.flatMap { normalizedLiveTraceValue($0.processName) } ?? sessionProcessName,
                     startedAt: metadata?.startedAt,
@@ -559,6 +578,8 @@ public struct LiveTraceSessionAccumulator: Sendable {
             storeInstanceID: metadata.storeInstanceID,
             title: metadata.title,
             storeName: resolvedStoreName,
+            parentStoreInstanceID: metadata.parentStoreInstanceID,
+            childKeyInParentStore: metadata.childKeyInParentStore,
             hostName: metadata.hostName,
             processName: metadata.processName,
             startedAt: metadata.startedAt,

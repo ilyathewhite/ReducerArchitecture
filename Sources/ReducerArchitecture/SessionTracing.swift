@@ -25,7 +25,6 @@ private final class SharedTraceSessionManager {
     private var sharedNetworkClient: LiveTraceClient?
     private var sharedNetworkHost: String?
     private var sharedNetworkPort: UInt16?
-    private var sharedNetworkReconnectDelay: TimeInterval?
     private var sharedNetworkPatchBufferCapacity: Int?
 
     private init() {}
@@ -88,7 +87,6 @@ private final class SharedTraceSessionManager {
         if let sharedNetworkClient,
            sharedNetworkHost == config.host,
            sharedNetworkPort == config.port,
-           sharedNetworkReconnectDelay == config.reconnectDelay,
            sharedNetworkPatchBufferCapacity == config.patchBufferCapacity {
             return sharedNetworkClient
         }
@@ -102,7 +100,6 @@ private final class SharedTraceSessionManager {
         sharedNetworkClient = nextClient
         sharedNetworkHost = config.host
         sharedNetworkPort = config.port
-        sharedNetworkReconnectDelay = config.reconnectDelay
         sharedNetworkPatchBufferCapacity = config.patchBufferCapacity
         Task {
             await previousClient?.stop()
@@ -115,7 +112,6 @@ private final class SharedTraceSessionManager {
         sharedNetworkClient = nil
         sharedNetworkHost = nil
         sharedNetworkPort = nil
-        sharedNetworkReconnectDelay = nil
         sharedNetworkPatchBufferCapacity = nil
         Task {
             await previousClient?.stop()
@@ -164,6 +160,15 @@ struct LiveTraceHandler: Sendable {
             )
         )
     }
+}
+
+@MainActor
+private protocol LiveTraceConfigurableStore: BasicViewModel {
+    func applyInheritedLiveTrace(
+        mode: LiveTraceMode,
+        parentStoreInstanceID: String,
+        childKeyInParentStore: String
+    )
 }
 
 // Session tracing support only. The store runtime calls into these helpers
@@ -411,7 +416,7 @@ extension StateStore {
     @inline(__always)
     /// Returns `true` when this store should trace session graph events.
     var isSessionGraphTracingEnabled: Bool {
-        guard logConfig.liveTraceEnabled else { return false }
+        guard logConfig.liveTraceEnabled != nil else { return false }
         return SharedTraceSessionManager.shared.liveConfig().hasOutputs
     }
 
@@ -459,6 +464,8 @@ extension StateStore {
             storeInstanceID: recorder.storeInstanceID.rawValue,
             title: resolvedTraceSessionTitle(),
             storeName: resolvedLiveTraceStoreName(),
+            parentStoreInstanceID: liveTraceParentStoreInstanceID,
+            childKeyInParentStore: liveTraceChildKeyInParentStore,
             hostName: ProcessInfo.processInfo.hostName,
             processName: ProcessInfo.processInfo.processName,
             startedAt: liveTraceMetadata?.startedAt ?? .now,
@@ -469,10 +476,11 @@ extension StateStore {
     }
 
     func attachLiveTraceOutputsIfNeeded(to recorder: SessionGraphRecorder) {
+        let previousMetadata = liveTraceMetadata
         let metadata = resolvedLiveTraceMetadata(for: recorder)
         let liveTraceConfig = SharedTraceSessionManager.shared.liveConfig()
 
-        if logConfig.liveTraceEnabled, liveTraceConfig.networkEnabled {
+        if logConfig.liveTraceEnabled != nil, liveTraceConfig.networkEnabled {
             recorder.setLiveClient(
                 SharedTraceSessionManager.shared.networkClient(logger: logConfig.logger),
                 metadata: metadata
@@ -485,12 +493,15 @@ extension StateStore {
             }
         }
 
-        if logConfig.liveTraceEnabled, let envelopeHandler = liveTraceConfig.envelopeHandler {
+        if logConfig.liveTraceEnabled != nil, let envelopeHandler = liveTraceConfig.envelopeHandler {
             if liveTraceHandler == nil {
                 liveTraceHandler = LiveTraceHandler(
                     metadata: metadata,
                     handler: envelopeHandler
                 )
+            }
+            else if previousMetadata != metadata {
+                liveTraceHandler?.sendStoreMetadata(metadata)
             }
             recorder.setLiveHandler(liveTraceHandler)
         }
@@ -522,6 +533,22 @@ extension StateStore {
         liveTraceMetadata = nil
         if !SharedTraceSessionManager.shared.liveConfig().networkEnabled {
             SharedTraceSessionManager.shared.stopNetworkClientIfNeeded()
+        }
+    }
+
+    func handleLogConfigDidChange(previousConfig: LogConfig) {
+        let hadLiveTraceEnabled = previousConfig.liveTraceEnabled != nil
+        let hasLiveTraceEnabled = logConfig.liveTraceEnabled != nil
+
+        guard hadLiveTraceEnabled || hasLiveTraceEnabled || liveTraceMetadata != nil || liveTraceHandler != nil else {
+            return
+        }
+
+        if hasLiveTraceEnabled, SharedTraceSessionManager.shared.liveConfig().hasOutputs {
+            _ = sessionTraceEnsureRecorder()
+        }
+        else {
+            clearLiveTraceOutputsIfNeeded()
         }
     }
 
@@ -712,6 +739,21 @@ extension StateStore {
             source: source,
             animationGroupID: animationGroupID,
             containingBatchID: containingBatchID
+        )
+    }
+
+    func configureLiveTraceForAddedChildIfNeeded<VM: BasicViewModel>(
+        _ child: VM,
+        key: String
+    ) {
+        guard logConfig.liveTraceEnabled == .selfAndChildren else { return }
+        guard let childStore = child as? any LiveTraceConfigurableStore else { return }
+
+        let parentStoreInstanceID = sessionTraceEnsureRecorder().storeInstanceID.rawValue
+        childStore.applyInheritedLiveTrace(
+            mode: .selfAndChildren,
+            parentStoreInstanceID: parentStoreInstanceID,
+            childKeyInParentStore: key
         )
     }
 
@@ -971,5 +1013,18 @@ extension StateStore {
             producedByActionID: producedByActionID,
             emittedByEffectID: emittedByEffectID
         )
+    }
+}
+
+@MainActor
+extension StateStore: LiveTraceConfigurableStore {
+    fileprivate func applyInheritedLiveTrace(
+        mode: LiveTraceMode,
+        parentStoreInstanceID: String,
+        childKeyInParentStore: String
+    ) {
+        liveTraceParentStoreInstanceID = parentStoreInstanceID
+        liveTraceChildKeyInParentStore = childKeyInParentStore
+        logConfig.liveTraceEnabled = mode
     }
 }

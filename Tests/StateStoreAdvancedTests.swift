@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import os
 import Testing
 @testable import ReducerArchitecture
 
@@ -152,6 +153,57 @@ extension AutoNamedLiveTraceStoreNsp {
             state.count += 1
             return .none
         }
+    }
+}
+
+private final class EnvelopeBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [LiveTraceEnvelope] = []
+
+    func append(_ envelope: LiveTraceEnvelope) {
+        lock.lock()
+        defer { lock.unlock() }
+        values.append(envelope)
+    }
+
+    func snapshot() -> [LiveTraceEnvelope] {
+        lock.lock()
+        defer { lock.unlock() }
+        return values
+    }
+}
+
+private final class MessageBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String] = []
+
+    func append(_ message: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        values.append(message)
+    }
+
+    func snapshot() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return values
+    }
+}
+
+private final class IntCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func increment() {
+        lock.lock()
+        defer { lock.unlock() }
+        value += 1
+    }
+
+    func snapshot() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
     }
 }
 
@@ -424,7 +476,7 @@ extension SessionTraceTests.StateStoreSessionTracePersistenceTests {
             firstStore.name = "FirstStore"
             weakFirstStore = firstStore
             collector = liveTraceEnvelopeCollector(for: firstStore)
-            secondStore.logConfig.liveTraceEnabled = true
+            secondStore.logConfig.liveTraceEnabled = .selfOnly
 
             firstStore.send(.mutating(.append(1)))
         }
@@ -450,7 +502,7 @@ extension SessionTraceTests.StateStoreSessionTracePersistenceTests {
         let firstStore = AutoNamedLiveTraceStoreNsp.store()
         let secondStore = AutoNamedLiveTraceStoreNsp.store()
         let collector = liveTraceEnvelopeCollector(for: firstStore)
-        secondStore.logConfig.liveTraceEnabled = true
+        secondStore.logConfig.liveTraceEnabled = .selfOnly
 
         firstStore.send(.mutating(.increment))
         secondStore.send(.mutating(.increment))
@@ -467,6 +519,227 @@ extension SessionTraceTests.StateStoreSessionTracePersistenceTests {
         #expect(secondStore.name == "AutoNamedLiveTraceStoreNsp 2")
     }
 
+    // Enable live tracing before the store handles any actions.
+    // Expect the first emitted envelope is store metadata rather than waiting for send().
+    @Test
+    func enablingLiveTraceEmitsMetadataBeforeFirstSend() throws {
+        let originalConfig = LiveTraceConfig.shared
+        defer { LiveTraceConfig.shared = originalConfig }
+        resetLiveTraceRuntimeForTests()
+
+        let receivedEnvelopes = EnvelopeBuffer()
+        var config = originalConfig
+        config.networkEnabled = false
+        config.envelopeHandler = { envelope in
+            receivedEnvelopes.append(envelope)
+        }
+        LiveTraceConfig.shared = config
+
+        let store = EffectHarnessNsp.store()
+        store.name = "ImmediateStore"
+
+        #expect(receivedEnvelopes.snapshot().isEmpty)
+
+        store.logConfig.liveTraceEnabled = .selfOnly
+
+        let envelopes = receivedEnvelopes.snapshot()
+        #expect(envelopes.count == 1)
+        let metadata = try #require(envelopes.first?.metadata)
+        #expect(metadata.storeName == "ImmediateStore")
+        #expect(metadata.endedAt == nil)
+        #expect(store.sessionGraphRecorder?.storeInstanceID.rawValue == metadata.storeInstanceID)
+        #expect(store.sessionGraphRecorder != nil)
+    }
+
+    // Enable inherited live tracing, then attach a child before either store sends an action.
+    // Expect the child emits its metadata immediately with the recorded parent relationship.
+    @Test
+    func addingChildEmitsChildMetadataBeforeFirstSend() throws {
+        let originalConfig = LiveTraceConfig.shared
+        defer { LiveTraceConfig.shared = originalConfig }
+        resetLiveTraceRuntimeForTests()
+
+        let receivedEnvelopes = EnvelopeBuffer()
+        var config = originalConfig
+        config.networkEnabled = false
+        config.envelopeHandler = { envelope in
+            receivedEnvelopes.append(envelope)
+        }
+        LiveTraceConfig.shared = config
+
+        let parent = EffectHarnessNsp.store()
+        parent.name = "ImmediateParentStore"
+        let child = EffectHarnessNsp.store()
+        child.name = "ImmediateChildStore"
+
+        #expect(receivedEnvelopes.snapshot().isEmpty)
+
+        parent.logConfig.liveTraceEnabled = .selfAndChildren
+        parent.addChild(child, key: "detail")
+
+        let envelopes = receivedEnvelopes.snapshot()
+        #expect(envelopes.count == 2)
+
+        let parentMetadata = try #require(
+            envelopes.first(where: { $0.metadata?.storeName == "ImmediateParentStore" })?.metadata
+        )
+        let childMetadata = try #require(
+            envelopes.first(where: { $0.metadata?.storeName == "ImmediateChildStore" })?.metadata
+        )
+
+        #expect(child.logConfig.liveTraceEnabled == .selfAndChildren)
+        #expect(parentMetadata.parentStoreInstanceID == nil)
+        #expect(parentMetadata.childKeyInParentStore == nil)
+        #expect(childMetadata.parentStoreInstanceID == parentMetadata.storeInstanceID)
+        #expect(childMetadata.childKeyInParentStore == "detail")
+        #expect(parent.sessionGraphRecorder?.storeInstanceID.rawValue == parentMetadata.storeInstanceID)
+        #expect(child.sessionGraphRecorder?.storeInstanceID.rawValue == childMetadata.storeInstanceID)
+    }
+
+    // Enable global live tracing before a store is allocated.
+    // Expect the store emits metadata immediately without per-store opt-in.
+    @Test
+    func traceAllStoresEmitsMetadataForNewStoreBeforeFirstSend() throws {
+        let originalConfig = LiveTraceConfig.shared
+        defer { LiveTraceConfig.shared = originalConfig }
+        resetLiveTraceRuntimeForTests()
+
+        let receivedEnvelopes = EnvelopeBuffer()
+        var config = originalConfig
+        config.networkEnabled = false
+        config.envelopeHandler = { envelope in
+            receivedEnvelopes.append(envelope)
+        }
+        config.traceAllStores = true
+        LiveTraceConfig.shared = config
+
+        #expect(receivedEnvelopes.snapshot().isEmpty)
+
+        let store = EffectHarnessNsp.store()
+
+        let envelopes = receivedEnvelopes.snapshot()
+        #expect(envelopes.count == 1)
+        let metadata = try #require(envelopes.first?.metadata)
+        #expect(metadata.storeName == "EffectHarnessNsp")
+        #expect(metadata.endedAt == nil)
+        #expect(store.logConfig.liveTraceEnabled == .selfAndChildren)
+        #expect(store.sessionGraphRecorder?.storeInstanceID.rawValue == metadata.storeInstanceID)
+        #expect(store.sessionGraphRecorder != nil)
+    }
+
+    // Enable global live tracing before parent and child stores are allocated.
+    // Expect addChild to resend child metadata with the recorded parent relationship.
+    @Test
+    func traceAllStoresResendsChildMetadataWithParentRelationshipOnAddChild() throws {
+        let originalConfig = LiveTraceConfig.shared
+        defer { LiveTraceConfig.shared = originalConfig }
+        resetLiveTraceRuntimeForTests()
+
+        let receivedEnvelopes = EnvelopeBuffer()
+        var config = originalConfig
+        config.networkEnabled = false
+        config.envelopeHandler = { envelope in
+            receivedEnvelopes.append(envelope)
+        }
+        config.traceAllStores = true
+        LiveTraceConfig.shared = config
+
+        let parent = EffectHarnessNsp.store()
+        let child = EffectHarnessNsp.store()
+
+        let initialEnvelopes = receivedEnvelopes.snapshot()
+        #expect(initialEnvelopes.count == 2)
+
+        parent.addChild(child, key: "detail")
+
+        let metadataEnvelopes = receivedEnvelopes.snapshot().compactMap(\.metadata)
+        #expect(metadataEnvelopes.count == 3)
+
+        let parentMetadata = try #require(
+            metadataEnvelopes.last(where: { $0.storeName == parent.name })
+        )
+        let childMetadataHistory = metadataEnvelopes.filter { $0.storeName == child.name }
+
+        #expect(parent.logConfig.liveTraceEnabled == .selfAndChildren)
+        #expect(child.logConfig.liveTraceEnabled == .selfAndChildren)
+        #expect(childMetadataHistory.count == 2)
+        #expect(childMetadataHistory.contains(where: { $0.parentStoreInstanceID == nil }))
+        #expect(
+            childMetadataHistory.contains(where: {
+                $0.parentStoreInstanceID == parentMetadata.storeInstanceID
+                    && $0.childKeyInParentStore == "detail"
+            })
+        )
+    }
+
+    // Attempt live tracing while the viewer is absent.
+    // Expect one human-readable connectivity error is surfaced and no further retries occur.
+    @Test
+    func disconnectedLiveTraceClientReportsOneReadableErrorAndStopsTrying() async throws {
+        let messages = MessageBuffer()
+        let probeAttempts = IntCounter()
+        let client = LiveTraceClient(
+            sessionID: "live-trace-test",
+            config: .init(),
+            logger: Logger(subsystem: "ReducerArchitectureTests", category: "LiveTraceClient"),
+            connectivityProbe: { host, port, _ in
+                probeAttempts.increment()
+                return "Live trace viewer is not connected at \(host):\(port). Start SessionTraceViewer before launching the app to capture live traces."
+            },
+            diagnosticSink: { message in
+                messages.append(message)
+            }
+        )
+
+        let metadata = LiveTraceStoreMetadata(
+            sessionID: "live-trace-test",
+            storeInstanceID: "EffectHarnessNsp.s1",
+            title: "EffectHarnessNsp",
+            storeName: "EffectHarnessNsp",
+            hostName: "TestHost",
+            processName: "Tests",
+            startedAt: .now
+        )
+
+        await client.updateStoreMetadata(metadata)
+        try await Task.sleep(for: .milliseconds(20))
+        await client.updateStoreMetadata(metadata)
+        try await Task.sleep(for: .milliseconds(20))
+        await client.stop()
+
+        #expect(probeAttempts.snapshot() == 1)
+        #expect(messages.snapshot() == [
+            "Live trace viewer is not connected at 127.0.0.1:38765. Start SessionTraceViewer before launching the app to capture live traces."
+        ])
+    }
+
+    // Enable tracing inheritance on a parent before adding a child store.
+    // Expect the child inherits tracing and the live session records the parent linkage.
+    @Test
+    func selfAndChildrenTracingPropagatesToAddedChildAndRecordsParentRelationship() async throws {
+        let parent = EffectHarnessNsp.store()
+        parent.name = "ParentStore"
+        let child = EffectHarnessNsp.store()
+        child.name = "ChildStore"
+        let collector = liveTraceEnvelopeCollector(for: parent, mode: .selfAndChildren)
+
+        parent.addChild(child, key: "detail")
+
+        #expect(child.logConfig.liveTraceEnabled == .selfAndChildren)
+
+        parent.send(.mutating(.append(1)))
+        child.send(.mutating(.append(2)))
+
+        let session = try await collector.waitForFirstStableSession(
+            where: { $0.storeTraces.count == 2 }
+        )
+        let parentTrace = try #require(session.storeTraces.first(where: { $0.storeName == "ParentStore" }))
+        let childTrace = try #require(session.storeTraces.first(where: { $0.storeName == "ChildStore" }))
+
+        #expect(childTrace.parentStoreInstanceID == parentTrace.storeInstanceID)
+        #expect(childTrace.childKeyInParentStore == "detail")
+    }
+
     // Disable the shared-config envelope handler after tracing starts.
     // Expect the existing live trace remains available and no new updates are mirrored.
     @Test
@@ -481,42 +754,6 @@ extension SessionTraceTests.StateStoreSessionTracePersistenceTests {
         let collection = try await collector.waitForFirstStableCollection()
         #expect(actionNodes(in: collection).count == 1)
         #expect(lastValuesStateString(in: collection) == "[1]")
-    }
-}
-
-extension LifecycleTests {
-    @Suite @MainActor struct StateStoreLifecycleTests {}
-}
-
-extension LifecycleTests.StateStoreLifecycleTests {
-    // Allocate then cancel store with lifecycle log enabled.
-    // Expect allocate/cancel events and deallocation cleanup.
-    @Test
-    func storeLifecycleLogTracksEventsForStoreLifetime() async throws {
-        // Set up lifecycle logging and weak reference.
-        let originalLog = storeLifecycleLog
-        defer { storeLifecycleLog = originalLog }
-        storeLifecycleLog.enabled = true
-        storeLifecycleLog.debug = false
-        storeLifecycleLog.exclude = { _ in false }
-        var trackedID: UUID?
-        weak var weakStore: EffectHarnessNsp.Store?
-
-        // Trigger allocation and cancellation.
-        do {
-            let store = EffectHarnessNsp.store()
-            trackedID = store.id
-            weakStore = store
-            #expect(storeLifecycleLog.lastEvent[store.id]?.event == "Allocated")
-            store.cancel()
-            #expect(storeLifecycleLog.lastEvent[store.id]?.event == "Cancelled")
-        }
-        await Task.yield()
-
-        // Expect deallocation and event cleanup.
-        #expect(weakStore == nil)
-        let unwrappedTrackedID = try #require(trackedID)
-        #expect(storeLifecycleLog.lastEvent[unwrappedTrackedID] == nil)
     }
 }
 

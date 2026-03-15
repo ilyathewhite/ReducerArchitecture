@@ -152,22 +152,6 @@ extension StateStoreTests.StateStoreCoverageGapTests {
         #expect(isNoneEffect)
     }
 
-    // Check lifecycle log default exclusion.
-    // Expect placeholder excluded and custom name allowed.
-    @Test
-    func storeLifecycleDefaultExcludeFiltersNavigationPlaceholder() {
-        // Set up default lifecycle logger.
-        let log = StoreLifecycleLog()
-
-        // Trigger exclude predicate.
-        let excludesPlaceholder = log.exclude("NavigationEnvPlaceholder")
-        let excludesCustomName = log.exclude("CustomStore")
-
-        // Expect only placeholder is excluded.
-        #expect(excludesPlaceholder)
-        #expect(!excludesCustomName)
-    }
-
     // MARK: - Store Helpers
 
     // Check static action helpers and publish flag.
@@ -239,6 +223,7 @@ extension StateStoreTests.StateStoreCoverageGapTests {
 
         #expect(!config.networkEnabled)
         #expect(config.envelopeHandler != nil)
+        #expect(!config.traceAllStores)
     }
 
     // MARK: - Effect Execution
@@ -514,32 +499,5 @@ extension StateStoreTests.StateStoreCoverageGapTests {
         #expect(actionLog.contains(where: { $0.contains("spawnAsync") }))
         #expect(actionLog.contains(where: { $0.contains("publish") }))
         #expect(actionLog.contains(where: { $0.contains("cancel") }))
-    }
-
-}
-
-extension LifecycleTests {
-    @Suite @MainActor struct StateStoreLifecycleCoverageTests {}
-}
-
-extension LifecycleTests.StateStoreLifecycleCoverageTests {
-    // Enable lifecycle debug logging and cancel store.
-    // Expect lifecycle event tracking still works.
-    @Test
-    func lifecycleDebugLoggingStillTracksCancelEvent() {
-        // Set up lifecycle log state.
-        let originalLog = storeLifecycleLog
-        defer { storeLifecycleLog = originalLog }
-        storeLifecycleLog.enabled = true
-        storeLifecycleLog.debug = true
-        storeLifecycleLog.exclude = { _ in false }
-
-        // Trigger allocate and cancel.
-        let store = NestedTaskGapNsp.store()
-        let storeID = store.id
-        store.cancel()
-
-        // Expect cancelled event tracked.
-        #expect(storeLifecycleLog.lastEvent[storeID]?.event == "Cancelled")
     }
 }

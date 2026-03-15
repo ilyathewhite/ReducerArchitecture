@@ -139,6 +139,8 @@ extension SessionTraceTests.SessionTraceCollectionTests {
                 .init(
                     storeInstanceID: "counter.s1",
                     storeName: "CounterStore",
+                    parentStoreInstanceID: "root.s0",
+                    childKeyInParentStore: "counter",
                     hostName: "Host A",
                     processName: "Example App",
                     startedAt: startedAt,
@@ -148,6 +150,9 @@ extension SessionTraceTests.SessionTraceCollectionTests {
         )
 
         let fileData = try JSONEncoder().encode(session)
+        let jsonString = try #require(String(data: fileData, encoding: .utf8))
+        #expect(jsonString.contains("\"parentChildKey\":\"counter\""))
+        #expect(!jsonString.contains("childKeyInParentStore"))
         let loaded = try TraceSession(fileData: fileData)
 
         #expect(loaded == session)
@@ -196,6 +201,8 @@ extension SessionTraceTests.SessionTraceCollectionTests {
                     storeInstanceID: "timer.s2",
                     title: "Example App",
                     storeName: "TimerStore",
+                    parentStoreInstanceID: "counter.s1",
+                    childKeyInParentStore: "timer",
                     hostName: "Host A",
                     processName: "Example App",
                     startedAt: startedAt.addingTimeInterval(5)
@@ -217,6 +224,8 @@ extension SessionTraceTests.SessionTraceCollectionTests {
                     storeInstanceID: "timer.s2",
                     title: "Example App",
                     storeName: "TimerStore",
+                    parentStoreInstanceID: "counter.s1",
+                    childKeyInParentStore: "timer",
                     hostName: "Host A",
                     processName: "Example App",
                     startedAt: startedAt.addingTimeInterval(5),
@@ -234,6 +243,8 @@ extension SessionTraceTests.SessionTraceCollectionTests {
         #expect(session.storeTrace(id: "timer.s2")?.traceCollection == secondCollection)
         #expect(session.storeTrace(id: "counter.s1")?.isEnded == false)
         #expect(session.storeTrace(id: "timer.s2")?.endedAt == secondEndedAt)
+        #expect(session.storeTrace(id: "timer.s2")?.parentStoreInstanceID == "counter.s1")
+        #expect(session.storeTrace(id: "timer.s2")?.childKeyInParentStore == "timer")
     }
 
     @Test
