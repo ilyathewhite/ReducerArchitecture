@@ -334,6 +334,15 @@ extension StateStore {
             self.animationGroupID = animationGroupID
             self.stateBefore = stateBefore
         }
+
+        static var disabled: Self {
+            .init(
+                recorder: nil,
+                actionID: nil,
+                animationGroupID: nil,
+                stateBefore: nil
+            )
+        }
     }
 
     /// Tracing payload for one action emitted from an effect.
@@ -429,6 +438,17 @@ extension StateStore {
         let recorder = sessionGraphRecorder ?? sessionTraceEnsureRecorder()
         attachLiveTraceOutputsIfNeeded(to: recorder)
         return recorder
+    }
+
+    @inline(__always)
+    func shouldRecordSessionTraceAction(_ action: Action) -> Bool {
+        if !isSessionGraphTracingEnabled {
+            return false
+        }
+        else if case .none = action  {
+            return false
+        }
+        return true
     }
 
     func resolvedTraceSessionTitle() -> String {
@@ -680,9 +700,9 @@ extension StateStore {
     func resolvedTraceAnimationGroupID(
         storeAction: StoreAction,
         animation: Animation?,
-        trace: SessionTraceSendContext
+        trace: SessionTraceSendContext,
+        recorder: SessionGraphRecorder
     ) -> String? {
-        guard let recorder = sessionGraphTraceRecorder else { return nil }
         if let animationGroupID = trace.animationGroupID {
             return animationGroupID
         }
@@ -865,46 +885,33 @@ extension StateStore {
         file: String?,
         line: Int?
     ) -> SessionTraceActionScope {
+        guard shouldRecordSessionTraceAction(storeAction.action) else {
+            return .disabled
+        }
+
+        let recorder = sessionTraceEnsureRecorder()
         let animationGroupID = resolvedTraceAnimationGroupID(
             storeAction: storeAction,
             animation: animation,
-            trace: trace
+            trace: trace,
+            recorder: recorder
         )
-        let recorder = sessionGraphTraceRecorder
-        let stateBefore = recorder.map { _ in
-            propertyCodeStrings(state)
+        let stateBefore = propertyCodeStrings(state)
+        let callSite = file.flatMap { file in
+            line.map { SessionGraph.ActionNode.CallSite(file: file, line: $0) }
         }
-        let callSite: SessionGraph.ActionNode.CallSite? = {
-            guard logConfig.logActionCallSite || isSessionGraphTracingEnabled else { return nil }
-            guard let file, let line else { return nil }
-            return .init(file: file, line: line)
-        }()
-        let shouldTraceAction: Bool = {
-            if case .none = storeAction.action {
-                return false
-            }
-            return true
-        }()
-
-        let actionID: SessionGraph.ActionID? = {
-            guard shouldTraceAction,
-                  let recorder,
-                  let stateBefore else {
-                return nil
-            }
-            return recorder.beginAction(
-                receivedAt: .now,
-                action: codeString(storeAction.action),
-                actionCase: tracedActionCase(storeAction.action),
-                kind: tracedActionKind(storeAction.action),
-                source: trace.source,
-                nestedLevel: nestedLevel,
-                animationGroupID: animationGroupID,
-                stateBefore: stateBefore,
-                callSite: callSite,
-                containingBatchID: trace.containingBatchID
-            )
-        }()
+        let actionID = recorder.beginAction(
+            receivedAt: .now,
+            action: codeString(storeAction.action),
+            actionCase: tracedActionCase(storeAction.action),
+            kind: tracedActionKind(storeAction.action),
+            source: trace.source,
+            nestedLevel: nestedLevel,
+            animationGroupID: animationGroupID,
+            stateBefore: stateBefore,
+            callSite: callSite,
+            containingBatchID: trace.containingBatchID
+        )
 
         return .init(
             recorder: recorder,
@@ -919,8 +926,9 @@ extension StateStore {
         _ trace: SessionTraceActionScope,
         outputEffect: Effect?
     ) {
-        guard let actionID = trace.actionID else { return }
-        trace.recorder?.endAction(
+        guard let recorder = trace.recorder,
+              let actionID = trace.actionID else { return }
+        recorder.endAction(
             actionID,
             completedAt: .now,
             stateAfter: propertyCodeStrings(state),

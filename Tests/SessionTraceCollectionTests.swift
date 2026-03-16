@@ -151,8 +151,8 @@ extension SessionTraceTests.SessionTraceCollectionTests {
 
         let fileData = try JSONEncoder().encode(session)
         let jsonString = try #require(String(data: fileData, encoding: .utf8))
-        #expect(jsonString.contains("\"parentChildKey\":\"counter\""))
-        #expect(!jsonString.contains("childKeyInParentStore"))
+        #expect(jsonString.contains("\"childKeyInParentStore\":\"counter\""))
+        #expect(!jsonString.contains("parentChildKey"))
         let loaded = try TraceSession(fileData: fileData)
 
         #expect(loaded == session)

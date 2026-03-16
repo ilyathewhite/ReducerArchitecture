@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import FoundationEx
 import os
 import Testing
 @testable import ReducerArchitecture
@@ -145,6 +146,45 @@ extension AutoNamedLiveTraceStoreNsp {
     @MainActor
     static func store() -> Store {
         .init(.init(), env: nil)
+    }
+
+    static func reduce(_ state: inout StoreState, _ action: MutatingAction) -> Store.SyncEffect {
+        switch action {
+        case .increment:
+            state.count += 1
+            return .none
+        }
+    }
+}
+
+private struct CountingCodeStringValue: CustomCodeStringConvertible {
+    let counter: IntCounter
+
+    func codeStringDescription(offset: Int, indent: Int, maxValueWidth: Int) -> String {
+        counter.increment()
+        return "probe"
+    }
+}
+
+private enum TraceFastPathNsp: StoreNamespace {
+    typealias PublishedValue = Never
+    typealias StoreEnvironment = Never
+    typealias EffectAction = Never
+
+    enum MutatingAction {
+        case increment
+    }
+
+    struct StoreState {
+        var count = 0
+        var probe: CountingCodeStringValue
+    }
+}
+
+extension TraceFastPathNsp {
+    @MainActor
+    static func store(counter: IntCounter) -> Store {
+        .init(.init(count: 0, probe: .init(counter: counter)), env: nil)
     }
 
     static func reduce(_ state: inout StoreState, _ action: MutatingAction) -> Store.SyncEffect {
@@ -420,6 +460,28 @@ extension SessionTraceTests {
 }
 
 extension SessionTraceTests.StateStoreSessionTracePersistenceTests {
+    // Send `.none` while live tracing is enabled.
+    // Expect tracing skips state snapshotting because no action node will be recorded.
+    @Test
+    func noneActionSkipsTraceStateSnapshot() {
+        let originalConfig = LiveTraceConfig.shared
+        defer { LiveTraceConfig.shared = originalConfig }
+        resetLiveTraceRuntimeForTests()
+
+        var config = originalConfig
+        config.networkEnabled = false
+        config.envelopeHandler = { _ in }
+        LiveTraceConfig.shared = config
+
+        let counter = IntCounter()
+        let store = TraceFastPathNsp.store(counter: counter)
+        store.logConfig.liveTraceEnabled = .selfOnly
+
+        store.send(.none)
+
+        #expect(counter.snapshot() == 0)
+    }
+
     // Stream live trace patches after mutations through the shared config handler.
     // Expect accumulated trace reflects the latest state.
     @Test

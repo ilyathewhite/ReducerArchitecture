@@ -649,17 +649,26 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 logger.debug("\(reducerInput)")
             }
 
-            let actionTrace = beginSessionTraceActionIfNeeded(
-                storeAction: storeAction,
-                animation: anim,
-                trace: trace,
-                file: file,
-                line: line
-            )
+            let shouldRecordActionTrace = shouldRecordSessionTraceAction(storeAction.action)
+            let actionTrace: SessionTraceActionScope
+            if shouldRecordActionTrace {
+                actionTrace = beginSessionTraceActionIfNeeded(
+                    storeAction: storeAction,
+                    animation: anim,
+                    trace: trace,
+                    file: file,
+                    line: line
+                )
+            }
+            else {
+                actionTrace = .disabled
+            }
             var effect: Effect? = nil
             var syncEffect: SyncEffect? = nil
             defer {
-                finishSessionTraceActionIfNeeded(actionTrace, outputEffect: effect)
+                if shouldRecordActionTrace {
+                    finishSessionTraceActionIfNeeded(actionTrace, outputEffect: effect)
+                }
             }
             switch storeAction.action {
             case .mutating(let mutatingAction, let animate, let animation):
@@ -672,7 +681,9 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                     syncEffect = Nsp.reduce(&state, mutatingAction)
                 }
                 effect = syncEffect.map { .init($0) }
-                recordSessionTraceMutationIfNeeded(actionTrace)
+                if shouldRecordActionTrace {
+                    recordSessionTraceMutationIfNeeded(actionTrace)
+                }
 
                 if logConfig.logState {
                     var reducerStateChange = "\n<-"
@@ -702,7 +713,9 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 _cancel()
                 isCancelled = true
                 taskManager.cancelAllTasks()
-                cancelAllActiveSessionTraceEffectsIfNeeded(actionTrace)
+                if shouldRecordActionTrace {
+                    cancelAllActiveSessionTraceEffectsIfNeeded(actionTrace)
+                }
                 syncEffect = nil
                 effect = nil
                 environment = nil
