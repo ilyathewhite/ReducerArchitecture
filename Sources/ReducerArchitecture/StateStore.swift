@@ -211,6 +211,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     ///
     /// The recorder is created on first traced action/effect and reused across subsequent sends
     /// so ids, open actions, open effects, and batch sequencing stay stable for the session.
+    var isSessionGraphTracingActive = false
     var sessionGraphRecorder: SessionGraphRecorder?
     var liveTraceMetadata: LiveTraceStoreMetadata?
     var liveTraceHandler: LiveTraceHandler?
@@ -229,6 +230,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 
     public init(_ initialValue: State, env: Environment?) {
         self.name = Self.storeDefaultKey
+        self.isSessionGraphTracingActive = false
         self.sessionGraphRecorder = nil
         self.liveTraceMetadata = nil
         self.liveTraceHandler = nil
@@ -257,9 +259,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         storeProvider: @escaping () -> StateStore?,
         mapToAction: (Element) -> (Action, Animation?),
         callSite: ((Element) -> (String?, Int?))? = nil,
-        effectID: SessionGraph.EffectID? = nil,
-        animationGroupID: String? = nil,
-        containingBatchID: SessionGraph.BatchID? = nil
+        trace: SessionTraceSendContext = .system
     ) async {
         await withTaskGroup(of: Void.self) { group in
             for await element in stream {
@@ -271,11 +271,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 if let task = store.send(
                     .code(action),
                     anim,
-                    trace: store.sessionTraceContextForEffectAction(
-                        effectID: effectID,
-                        animationGroupID: animationGroupID,
-                        containingBatchID: containingBatchID
-                    ),
+                    trace: trace,
                     file: file,
                     line: line
                 ) {
@@ -291,8 +287,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         _ asyncAction: () async -> Action,
         animation: Animation?,
         storeProvider: @escaping () -> StateStore?,
-        effectID: SessionGraph.EffectID? = nil,
-        animationGroupID: String? = nil
+        trace: SessionTraceSendContext = .system
     ) async {
         let action = await asyncAction()
         guard !Task.isCancelled else { return }
@@ -301,11 +296,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         if let task = store.send(
             .code(action),
             animation,
-            trace: store.sessionTraceContextForEffectAction(
-                effectID: effectID,
-                animationGroupID: animationGroupID,
-                containingBatchID: nil
-            )
+            trace: trace
         ) {
             await task.value
         }
@@ -317,16 +308,14 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         animation: Animation?,
         asyncAction: @escaping () async -> Action,
         storeProvider: @escaping () -> StateStore?,
-        effectID: SessionGraph.EffectID? = nil,
-        animationGroupID: String? = nil
+        trace: SessionTraceSendContext = .system
     ) -> Task<Void, Never> {
         taskManager.addTask(cancellingPreviousWithKey: key) {
             await runAsyncAction(
                 asyncAction,
                 animation: animation,
                 storeProvider: storeProvider,
-                effectID: effectID,
-                animationGroupID: animationGroupID
+                trace: trace
             )
         }
     }
@@ -336,9 +325,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         cancellingPreviousWithKey key: String? = nil,
         asyncActionSequence: @escaping (_ callback: Effect.AsyncActionCallback) async -> Void,
         storeProvider: @escaping () -> StateStore?,
-        effectID: SessionGraph.EffectID? = nil,
-        animationGroupID: String? = nil,
-        containingBatchID: SessionGraph.BatchID? = nil
+        trace: SessionTraceSendContext = .system
     ) -> Task<Void, Never> {
         let (stream, continuation) = AsyncStream<(Action, Animation?, String, Int)>.makeStream()
 
@@ -368,9 +355,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 callSite: { _, _, file, line in
                     (file, line)
                 },
-                effectID: effectID,
-                animationGroupID: animationGroupID,
-                containingBatchID: containingBatchID
+                trace: trace
             )
         }
 
@@ -403,6 +388,11 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             effect,
             trace: trace,
             dispatchingSyncEffect: dispatchingSyncEffect
+        )
+        let effectActionTrace = sessionTraceContextForEffectAction(
+            effectID: effectTrace.effectID,
+            animationGroupID: effectTrace.animationGroupID,
+            containingBatchID: nil
         )
         switch effect {
         case let .action(action, anim):
@@ -462,8 +452,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 animation: anim,
                 asyncAction: f,
                 storeProvider: { [weak self] in self },
-                effectID: effectTrace.effectID,
-                animationGroupID: effectTrace.animationGroupID
+                trace: effectActionTrace
             )
 
         case let .asyncActionLatest(key, anim, f):
@@ -476,8 +465,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 animation: anim,
                 asyncAction: f,
                 storeProvider: { [weak self] in self },
-                effectID: effectTrace.effectID,
-                animationGroupID: effectTrace.animationGroupID
+                trace: effectActionTrace
             )
 
         case .asyncActions(let anim, let f):
@@ -523,8 +511,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 taskManager: taskManager,
                 asyncActionSequence: f,
                 storeProvider: { [weak self] in self },
-                effectID: effectTrace.effectID,
-                animationGroupID: effectTrace.animationGroupID
+                trace: effectActionTrace
             )
 
         case let .asyncActionSequenceLatest(key, f):
@@ -536,8 +523,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 cancellingPreviousWithKey: key,
                 asyncActionSequence: f,
                 storeProvider: { [weak self] in self },
-                effectID: effectTrace.effectID,
-                animationGroupID: effectTrace.animationGroupID
+                trace: effectActionTrace
             )
 
         case let .publisher(publisher, anim):
@@ -561,8 +547,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                             from: stream,
                             storeProvider: { [weak self] in self },
                             mapToAction: { ($0, anim) },
-                            effectID: effectTrace.effectID,
-                            animationGroupID: effectTrace.animationGroupID
+                            trace: effectActionTrace
                         )
                         cancellable.cancel()
                     },
@@ -597,7 +582,6 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         line: Int? = #line
     ) -> Task<Void, Never>? {
         apply(anim) { () -> Task<Void, Never>? in
-            syncLiveTraceOutputsIfNeeded()
             guard !isCancelled else {
                 switch storeAction.action {
                 case .cancel:

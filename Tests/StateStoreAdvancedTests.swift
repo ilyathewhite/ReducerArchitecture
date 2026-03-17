@@ -802,10 +802,10 @@ extension SessionTraceTests.StateStoreSessionTracePersistenceTests {
         #expect(childTrace.childKeyInParentStore == "detail")
     }
 
-    // Disable the shared-config envelope handler after tracing starts.
-    // Expect the existing live trace remains available and no new updates are mirrored.
+    // Change the shared-config envelope handler after tracing starts.
+    // Expect the existing traced store keeps recording with the configuration it started with.
     @Test
-    func disablingEnvelopeHandlerStopsFurtherLiveTraceRecording() async throws {
+    func changingEnvelopeHandlerAfterTracingStartsDoesNotAffectExistingRecording() async throws {
         let store = EffectHarnessNsp.store()
         let collector = liveTraceEnvelopeCollector(for: store)
 
@@ -814,8 +814,8 @@ extension SessionTraceTests.StateStoreSessionTracePersistenceTests {
         store.send(.mutating(.append(2)))
 
         let collection = try await collector.waitForFirstStableCollection()
-        #expect(actionNodes(in: collection).count == 1)
-        #expect(lastValuesStateString(in: collection) == "[1]")
+        #expect(actionNodes(in: collection).count == 2)
+        #expect(lastValuesStateString(in: collection) == "[1, 2]")
     }
 }
 

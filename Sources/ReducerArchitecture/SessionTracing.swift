@@ -181,7 +181,7 @@ extension StateStore {
     /// 1. Who caused this send?
     /// 2. Should it inherit an existing animation lineage?
     /// 3. Should it be attached to an already-open batch node?
-    struct SessionTraceSendContext {
+    struct SessionTraceSendContext: Sendable {
         /// The causal source recorded on the action node.
         ///
         /// `.user` is used for top-level public `send` calls, `.system` is used for runtime
@@ -249,7 +249,7 @@ extension StateStore {
     /// `StateStore.swift` builds this right before handing an `Effect` to `addEffect`.
     /// It lets tracing preserve the parent action/effect lineage even when the effect later
     /// emits work on another task.
-    struct SessionTraceEffectContext {
+    struct SessionTraceEffectContext: Sendable {
         /// The traced action whose output produced this effect.
         ///
         /// When non-`nil`, the recorder can create a `.startedEffect` edge for real effect nodes,
@@ -425,8 +425,7 @@ extension StateStore {
     @inline(__always)
     /// Returns `true` when this store should trace session graph events.
     var isSessionGraphTracingEnabled: Bool {
-        guard logConfig.liveTraceEnabled != nil else { return false }
-        return SharedTraceSessionManager.shared.liveConfig().hasOutputs
+        isSessionGraphTracingActive
     }
 
     @inline(__always)
@@ -435,9 +434,7 @@ extension StateStore {
         guard isSessionGraphTracingEnabled else {
             return nil
         }
-        let recorder = sessionGraphRecorder ?? sessionTraceEnsureRecorder()
-        attachLiveTraceOutputsIfNeeded(to: recorder)
-        return recorder
+        return sessionGraphRecorder ?? sessionTraceEnsureRecorder()
     }
 
     @inline(__always)
@@ -531,16 +528,6 @@ extension StateStore {
         }
     }
 
-    func syncLiveTraceOutputsIfNeeded() {
-        guard isSessionGraphTracingEnabled else {
-            clearLiveTraceOutputsIfNeeded()
-            return
-        }
-        if let recorder = sessionGraphRecorder {
-            attachLiveTraceOutputsIfNeeded(to: recorder)
-        }
-    }
-
     func clearLiveTraceOutputsIfNeeded() {
         guard liveTraceHandler != nil ||
                 liveTraceMetadata != nil else {
@@ -559,13 +546,15 @@ extension StateStore {
     func handleLogConfigDidChange(previousConfig: LogConfig) {
         let hadLiveTraceEnabled = previousConfig.liveTraceEnabled != nil
         let hasLiveTraceEnabled = logConfig.liveTraceEnabled != nil
+        isSessionGraphTracingActive = hasLiveTraceEnabled && SharedTraceSessionManager.shared.liveConfig().hasOutputs
 
         guard hadLiveTraceEnabled || hasLiveTraceEnabled || liveTraceMetadata != nil || liveTraceHandler != nil else {
             return
         }
 
-        if hasLiveTraceEnabled, SharedTraceSessionManager.shared.liveConfig().hasOutputs {
-            _ = sessionTraceEnsureRecorder()
+        if isSessionGraphTracingActive {
+            let recorder = sessionTraceEnsureRecorder()
+            attachLiveTraceOutputsIfNeeded(to: recorder)
         }
         else {
             clearLiveTraceOutputsIfNeeded()
@@ -717,7 +706,6 @@ extension StateStore {
 
     func sessionTraceEnsureRecorder() -> SessionGraphRecorder {
         if let sessionGraphRecorder {
-            attachLiveTraceOutputsIfNeeded(to: sessionGraphRecorder)
             return sessionGraphRecorder
         }
         let recorder = SessionGraphRecorder(
@@ -734,9 +722,6 @@ extension StateStore {
         animationGroupID: String?,
         containingBatchID: SessionGraph.BatchID?
     ) -> SessionTraceSendContext {
-        if sessionGraphTraceRecorder != nil {
-            assert(effectID != nil, "Missing effect id while tracing effect-origin action")
-        }
         let source: SessionGraph.ActionNode.Source = effectID.map { .effect(effectID: $0) } ?? .user
         return .init(
             source: source,
@@ -751,9 +736,6 @@ extension StateStore {
         animationGroupID: String?,
         containingBatchID: SessionGraph.BatchID?
     ) -> SessionTraceSendContext {
-        if sessionGraphTraceRecorder != nil {
-            assert(actionID != nil, "Missing action id while tracing action-origin action")
-        }
         let source: SessionGraph.ActionNode.Source = actionID.map { .action(actionID: $0) } ?? .user
         return .init(
             source: source,
@@ -766,6 +748,7 @@ extension StateStore {
         _ child: VM,
         key: String
     ) {
+        guard isSessionGraphTracingEnabled else { return }
         guard logConfig.liveTraceEnabled == .selfAndChildren else { return }
         guard let childStore = child as? any LiveTraceConfigurableStore else { return }
 
