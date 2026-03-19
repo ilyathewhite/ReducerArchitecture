@@ -135,7 +135,7 @@ extension SessionTraceTests.SessionGraphTests {
     }
 
     @Test
-    func sessionGraphCapturesSyncFanOutWithBatchAndDiff() async throws {
+    func sessionGraphCapturesReducerFanOutWithDirectProducedEdgesAndDiff() async throws {
         let store = SessionGraphHarnessNsp.store()
         let collectionTask = liveTraceCollectionTask(for: store)
 
@@ -167,7 +167,7 @@ extension SessionTraceTests.SessionGraphTests {
 
         #expect(actionNodes.count == 3)
         #expect(mutationNodes.count == 3)
-        #expect(batchNodes.count == 1)
+        #expect(batchNodes.isEmpty)
 
         let rootAction = try #require(actionNodes.first(where: { $0.source == .user }))
         let fanOutActions = actionNodes.filter { node in
@@ -184,9 +184,22 @@ extension SessionTraceTests.SessionGraphTests {
         #expect(orderedActionIds[1].rawValue.hasSuffix(".a2"))
         #expect(orderedActionIds[2].rawValue.hasSuffix(".a3"))
 
-        #expect(producedEdges.count == 1)
-        #expect(containsEdges.count == 2)
-        #expect(batchNodes.first?.kind == .syncFanOut)
+        #expect(producedEdges.count == 2)
+        #expect(containsEdges.isEmpty)
+        #expect(producedEdges.allSatisfy { $0.actionID == rootAction.id })
+        #expect(
+            producedEdges
+                .sorted { lhs, rhs in
+                    if lhs.productionIndex == rhs.productionIndex {
+                        return lhs.order < rhs.order
+                    }
+                    return lhs.productionIndex < rhs.productionIndex
+                }
+                .map(\.nodeID)
+                == fanOutActions
+                .sorted(by: { $0.order < $1.order })
+                .map { $0.id.rawValue }
+        )
         #expect(mutationNodes.filter {
             $0.propertyDiff.contains(where: { $0.property == "values" })
         }.count == 2)

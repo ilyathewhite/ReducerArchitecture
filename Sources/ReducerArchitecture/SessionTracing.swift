@@ -386,14 +386,13 @@ extension StateStore {
 
     /// Tracing payload shared by every action emitted inside one traced batch.
     ///
-    /// The runtime uses this for `.actions` and similar fan-out paths after it has created a
-    /// batch node that should own the emitted actions.
+    /// The runtime uses this for `.actions` and similar fan-out paths when it decides to create
+    /// a batch node that should own the emitted actions.
     struct SessionTraceBatchParameters {
         /// The lineage shared by each action in the batch.
         ///
-        /// `trace.containingBatchID` points at the batch node created just before dispatch, so
-        /// every emitted action is attached to that batch instead of being linked directly to the
-        /// source action/effect.
+        /// When `trace.containingBatchID` is non-`nil`, emitted actions are attached to that
+        /// batch instead of being linked directly to the source action/effect.
         let trace: SessionTraceSendContext
         /// The file that batched emitted actions should use as their call site, if any.
         ///
@@ -804,25 +803,14 @@ extension StateStore {
         file: String?,
         line: Int?
     ) -> SessionTraceBatchParameters {
-        let batchID: SessionGraph.BatchID?
-        if dispatchingSyncEffect {
-            batchID = beginSessionTraceBatchIfNeeded(
-                kind: .syncFanOut,
-                actionCount: actionCount,
-                animationGroupID: trace.inheritedAnimationGroupID,
-                producedByActionID: trace.startedByActionID,
-                emittedByEffectID: nil
-            )
-        }
-        else {
-            batchID = beginSessionTraceBatchIfNeeded(
+        let batchID: SessionGraph.BatchID? = dispatchingSyncEffect
+            ? nil
+            : beginSessionTraceBatchIfNeeded(
                 kind: .effectActions,
                 actionCount: actionCount,
                 animationGroupID: animationGroupID,
-                producedByActionID: nil,
                 emittedByEffectID: effectID
             )
-        }
 
         return .init(
             trace: sessionTraceParametersForEffectAction(
@@ -849,7 +837,6 @@ extension StateStore {
             kind: .effectAsyncActions,
             actionCount: actionCount,
             animationGroupID: animationGroupID,
-            producedByActionID: nil,
             emittedByEffectID: effectID
         )
 
@@ -992,7 +979,6 @@ extension StateStore {
         kind: SessionGraph.BatchNode.Kind,
         actionCount: Int,
         animationGroupID: String?,
-        producedByActionID: SessionGraph.ActionID?,
         emittedByEffectID: SessionGraph.EffectID?
     ) -> SessionGraph.BatchID? {
         guard let recorder = sessionGraphTraceRecorder else { return nil }
@@ -1001,7 +987,6 @@ extension StateStore {
             actionCount: actionCount,
             nestedLevel: nestedLevel,
             animationGroupID: animationGroupID,
-            producedByActionID: producedByActionID,
             emittedByEffectID: emittedByEffectID
         )
     }

@@ -37,7 +37,7 @@ public struct SessionGraph: Codable, Equatable, Sendable {
     public typealias BatchID = Tagged<BatchIDTag, String>
 
     /// The schema version written by newly saved traces.
-    public static let currentSchemaVersion = 2
+    public static let currentSchemaVersion = 3
 
     /// Version of the serialized graph schema used by this snapshot.
     ///
@@ -342,15 +342,13 @@ public struct SessionGraph: Codable, Equatable, Sendable {
         public var endOrder: Int?
     }
 
-    /// Synthetic grouping node for one fan-out of multiple emitted actions.
+    /// Synthetic grouping node for one grouped effect emission of multiple actions.
     ///
-    /// Batch nodes collapse "many children from one source" into one causal wrapper so viewers can
-    /// show a single predecessor edge from the source to the batch, then ordered containment edges
+    /// Batch nodes collapse "many children from one effect" into one causal wrapper so viewers can
+    /// show a single predecessor edge from the effect to the batch, then ordered containment edges
     /// from the batch to each emitted action.
     public struct BatchNode: Codable, Equatable, Identifiable, Sendable {
         public enum Kind: String, Codable, Sendable {
-            /// Multiple actions returned synchronously from reducer output.
-            case syncFanOut
             /// Multiple actions emitted synchronously by an effect.
             case effectActions
             /// Multiple actions emitted concurrently/asynchronously by an effect.
@@ -468,15 +466,13 @@ public struct SessionGraph: Codable, Equatable, Sendable {
         public let emissionIndex: Int
     }
 
-    /// Connects an action to another node it produced synchronously.
-    ///
-    /// Like `EmittedActionEdge`, `nodeID` may point to either an `ActionNode` or a `BatchNode`.
+    /// Connects an action to another action it produced synchronously.
     public struct ProducedActionEdge: Codable, Equatable, Sendable {
         /// Global order in which the edge was recorded.
         public let order: Int
         /// Action responsible for producing the node.
         public let actionID: ActionID
-        /// Produced action node id, or batch node id when fan-out was grouped.
+        /// Produced action node id.
         public let nodeID: String
         /// 1-based production sequence for nodes produced by this action.
         public let productionIndex: Int
@@ -846,7 +842,6 @@ final class SessionGraphRecorder {
         actionCount: Int,
         nestedLevel: Int,
         animationGroupID: String?,
-        producedByActionID: SessionGraph.ActionID?,
         emittedByEffectID: SessionGraph.EffectID?
     ) -> SessionGraph.BatchID {
         var operations: [SessionGraphRecorderOperation] = []
@@ -869,21 +864,6 @@ final class SessionGraphRecorder {
                         order: makeOrder(),
                         parentNodeID: parentActionID.rawValue,
                         childNodeID: batchID.rawValue
-                    )
-                )
-            )
-            )
-        }
-
-        if let producedByActionID {
-            operations.append(
-                .appendEdge(
-                .producedAction(
-                    .init(
-                        order: makeOrder(),
-                        actionID: producedByActionID,
-                        nodeID: batchID.rawValue,
-                        productionIndex: nextProductionIndex(for: producedByActionID)
                     )
                 )
             )
