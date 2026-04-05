@@ -11,6 +11,10 @@ let package = Package(
         .library(
             name: "ReducerArchitecture",
             targets: ["ReducerArchitecture"]
+        ),
+        .library(
+            name: "TestSupport",
+            targets: ["TestSupport"]
         )
     ],
     dependencies: [
