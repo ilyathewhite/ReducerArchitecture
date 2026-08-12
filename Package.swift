@@ -22,7 +22,7 @@ let package = Package(
         .package(url: "https://github.com/ilyathewhite/CombineEx.git", .exact("1.0.5")),
         .package(url: "https://github.com/ilyathewhite/AsyncNavigation.git", .exact("1.0.13")),
         .package(url: "https://github.com/pointfreeco/swift-tagged.git", .exact("0.10.0")),
-        .package(url: "https://github.com/ilyathewhite/GraphStorage.git", .exact("1.0.0"))
+        .package(url: "https://github.com/ilyathewhite/GraphStorage.git", .exact("1.0.1"))
     ],
     targets: [
         .target(
