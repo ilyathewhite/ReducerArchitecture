@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import FoundationEx
 import Testing
@@ -355,3 +356,4 @@ extension SessionTraceTests.SessionGraphTests {
         #expect(!stateResultEdges.isEmpty)
     }
 }
+#endif

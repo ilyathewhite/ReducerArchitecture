@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import Testing
 @testable import ReducerArchitecture
@@ -355,3 +356,4 @@ extension SessionTraceTests.SessionTraceCollectionTests {
         return try Data(contentsOf: URL(fileURLWithPath: path))
     }
 }
+#endif

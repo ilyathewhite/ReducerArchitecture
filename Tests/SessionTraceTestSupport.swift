@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 @testable import ReducerArchitecture
 
@@ -144,3 +145,4 @@ final class LiveTraceEnvelopeCollector: @unchecked Sendable {
         return accumulator.session
     }
 }
+#endif

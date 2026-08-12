@@ -1,4 +1,6 @@
 //  SessionGraph.swift
+
+#if DEBUG
 //  Created by Ilya Belenkiy on 2/25/26.
 
 import Foundation
@@ -1108,3 +1110,4 @@ private actor SessionGraphRecorderActor {
         }
     }
 }
+#endif

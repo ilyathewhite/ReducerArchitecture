@@ -128,6 +128,7 @@ extension PublishedIntSourceNsp {
     }
 }
 
+#if DEBUG
 private enum AutoNamedLiveTraceStoreNsp: StoreNamespace {
     typealias PublishedValue = Never
     typealias StoreEnvironment = Never
@@ -246,6 +247,7 @@ private final class IntCounter: @unchecked Sendable {
         return value
     }
 }
+#endif
 
 extension StateStoreTests {
     @Suite @MainActor struct StateStoreAdvancedTests {}
@@ -455,6 +457,7 @@ extension StateStoreTests.StateStoreAdvancedTests {
     }
 }
 
+#if DEBUG
 extension SessionTraceTests {
     @Suite @MainActor struct StateStoreSessionTracePersistenceTests {}
 }
@@ -838,3 +841,4 @@ private func lastValuesStateString(in collection: SessionTraceCollection) -> Str
     }
     return nil
 }
+#endif

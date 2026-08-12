@@ -1,6 +1,7 @@
 //  SessionTracing.swift
 //  Created by Ilya Belenkiy on 2/25/26.
 
+#if DEBUG
 import Foundation
 import Combine
 import FoundationEx
@@ -1004,3 +1005,118 @@ extension StateStore: LiveTraceConfigurableStore {
         logConfig.liveTraceEnabled = mode
     }
 }
+#else
+#if canImport(SwiftUI)
+import SwiftUI
+#endif
+
+extension StateStore {
+    struct SessionTraceID: Sendable {}
+
+    struct SessionTraceSendContext: Sendable {
+        static var user: Self { Self() }
+        static var system: Self { Self() }
+    }
+
+    struct SessionTraceEffectContext: Sendable {
+        init(startedByActionID: SessionTraceID?, inheritedAnimationGroupID: String?) {}
+    }
+
+    struct SessionTraceActionScope {
+        let actionID: SessionTraceID? = nil
+        let animationGroupID: String? = nil
+
+        static var disabled: Self { Self() }
+    }
+
+    struct SessionTraceParameters {
+        let trace: SessionTraceSendContext
+        let file: String?
+        let line: Int?
+    }
+
+    struct SessionTraceBatchParameters {
+        let trace: SessionTraceSendContext
+        let file: String?
+        let line: Int?
+    }
+
+    @inline(__always)
+    func shouldRecordSessionTraceAction(_ action: Action) -> Bool {
+        false
+    }
+
+    @inline(__always)
+    func beginSessionTraceActionIfNeeded(
+        storeAction: StoreAction,
+        animation: Animation?,
+        trace: SessionTraceSendContext,
+        file: String?,
+        line: Int?
+    ) -> SessionTraceActionScope {
+        .disabled
+    }
+
+    @inline(__always)
+    func finishSessionTraceActionIfNeeded(_ trace: SessionTraceActionScope, outputEffect: Effect?) {}
+
+    @inline(__always)
+    func recordSessionTraceMutationIfNeeded(_ trace: SessionTraceActionScope) {}
+
+    @inline(__always)
+    func cancelAllActiveSessionTraceEffectsIfNeeded(_ trace: SessionTraceActionScope) {}
+
+    @inline(__always)
+    func beginSessionTraceEffectIfNeeded(
+        _ effect: Effect,
+        trace: SessionTraceEffectContext,
+        dispatchingSyncEffect: Bool
+    ) -> (effectID: SessionTraceID?, animationGroupID: String?) {
+        (nil, nil)
+    }
+
+    @inline(__always)
+    func sessionTraceContextForEffectAction(
+        effectID: SessionTraceID?,
+        animationGroupID: String?,
+        containingBatchID: SessionTraceID?
+    ) -> SessionTraceSendContext {
+        .system
+    }
+
+    @inline(__always)
+    func sessionTraceParametersForEffectAction(
+        dispatchingSyncEffect: Bool,
+        trace: SessionTraceEffectContext,
+        effectID: SessionTraceID?,
+        animationGroupID: String?,
+        file: String?,
+        line: Int?,
+        containingBatchID: SessionTraceID?
+    ) -> SessionTraceParameters {
+        .init(trace: .system, file: file, line: line)
+    }
+
+    @inline(__always)
+    func sessionTraceBatchParametersForEffectActions(
+        dispatchingSyncEffect: Bool,
+        trace: SessionTraceEffectContext,
+        effectID: SessionTraceID?,
+        animationGroupID: String?,
+        actionCount: Int,
+        file: String?,
+        line: Int?
+    ) -> SessionTraceBatchParameters {
+        .init(trace: .system, file: file, line: line)
+    }
+
+    @inline(__always)
+    func sessionTraceParametersForAsyncEffectActions(
+        effectID: SessionTraceID?,
+        animationGroupID: String?,
+        actionCount: Int
+    ) -> SessionTraceSendContext {
+        .system
+    }
+}
+#endif

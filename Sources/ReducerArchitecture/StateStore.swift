@@ -63,10 +63,12 @@ where MutatingAction == Void, EffectAction == Never {
     }
 }
 
+#if DEBUG
 public enum LiveTraceMode: Equatable, Sendable {
     case selfOnly
     case selfAndChildren
 }
+#endif
 
 @MainActor
 public protocol AnyStore: BasicViewModel {
@@ -201,12 +203,15 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 
     public var logConfig = LogConfig() {
         didSet {
+#if DEBUG
             handleLogConfigDidChange(previousConfig: oldValue)
+#endif
         }
     }
     internal var logger: Logger {
         logConfig.logger
     }
+#if DEBUG
     /// Recorder for one store's live trace stream.
     ///
     /// The recorder is created on first traced action/effect and reused across subsequent sends
@@ -217,6 +222,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     var liveTraceHandler: LiveTraceHandler?
     var liveTraceParentStoreInstanceID: String?
     var liveTraceChildKeyInParentStore: String?
+#endif
 
     @Published public private(set) var state: State
     public private(set) var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
@@ -230,22 +236,27 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 
     public init(_ initialValue: State, env: Environment?) {
         self.name = Self.storeDefaultKey
+#if DEBUG
         self.isSessionGraphTracingActive = false
         self.sessionGraphRecorder = nil
         self.liveTraceMetadata = nil
         self.liveTraceHandler = nil
         self.liveTraceParentStoreInstanceID = nil
         self.liveTraceChildKeyInParentStore = nil
+#endif
         self.state = initialValue
         self.environment = env
 
+#if DEBUG
         if LiveTraceConfig.shared.traceAllStores {
             let previousConfig = logConfig
             logConfig.liveTraceEnabled = .selfAndChildren
             handleLogConfigDidChange(previousConfig: previousConfig)
         }
+#endif
     }
-    
+
+#if DEBUG
     deinit {
         Self.notifyLiveTraceStoreEndedOnDeinit(
             metadata: liveTraceMetadata,
@@ -253,6 +264,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             logger: logConfig.logger
         )
     }
+#endif
 
     private static func consumeActions<Element>(
         from stream: AsyncStream<Element>,
@@ -753,7 +765,9 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 public extension StateStore {
     func addChild<VM: BasicViewModel>(_ child: VM, key: String = VM.viewModelDefaultKey) {
         addChild(child, key: key) { child, key in
+#if DEBUG
             self.configureLiveTraceForAddedChildIfNeeded(child, key: key)
+#endif
         }
     }
 
@@ -762,7 +776,9 @@ public extension StateStore {
         key: String = VM.viewModelDefaultKey
     ) {
         addChildIfNeeded(child(), key: key) { child, key in
+#if DEBUG
             self.configureLiveTraceForAddedChildIfNeeded(child, key: key)
+#endif
         }
     }
 
@@ -771,7 +787,9 @@ public extension StateStore {
         key: String = VM.viewModelDefaultKey
     ) async throws -> VM.PublishedValue {
         try await run(child, key: key) { child, key in
+#if DEBUG
             self.configureLiveTraceForAddedChildIfNeeded(child, key: key)
+#endif
         }
     }
 }
@@ -879,6 +897,7 @@ extension StateStore {
         public var logState = false
         public var logActions = false
         public var logActionCallSite = false
+#if DEBUG
         /// Opts this store into the shared app-run live-trace session configured by
         /// `LiveTraceConfig.shared`.
         ///
@@ -887,6 +906,7 @@ extension StateStore {
         /// If `LiveTraceConfig.shared.traceAllStores` is enabled, new stores default to
         /// `.selfAndChildren` until explicitly overridden.
         public var liveTraceEnabled: LiveTraceMode? = nil
+#endif
 
         public var logEnabled: Bool {
             logState || logActions || logActionCallSite

@@ -1,4 +1,6 @@
 //  LiveTrace.swift
+
+#if DEBUG
 //  Created by Ilya Belenkiy on 3/3/26.
 
 import Foundation
@@ -599,3 +601,4 @@ enum LiveTraceCodec {
         try JSONDecoder().decode(LiveTraceEnvelope.self, from: data)
     }
 }
+#endif

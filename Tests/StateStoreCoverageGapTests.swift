@@ -212,6 +212,7 @@ extension StateStoreTests.StateStoreCoverageGapTests {
         #expect(nonStoreChild == nil)
     }
 
+#if DEBUG
     // Disable network recording and enable an in-process live trace handler.
     // Expect the shared live-trace config can record locally without TCP output.
     @Test
@@ -225,6 +226,7 @@ extension StateStoreTests.StateStoreCoverageGapTests {
         #expect(config.envelopeHandler != nil)
         #expect(!config.traceAllStores)
     }
+#endif
 
     // MARK: - Effect Execution
 

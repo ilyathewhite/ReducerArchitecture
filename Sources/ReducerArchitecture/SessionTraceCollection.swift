@@ -1,4 +1,6 @@
 //  SessionTraceCollection.swift
+
+#if DEBUG
 //  Created by Ilya Belenkiy on 2/25/26.
 
 import Foundation
@@ -399,3 +401,4 @@ public struct SessionTraceCollection: Codable, Equatable, Sendable {
 
     static let dataExtension = GraphStorageCodec.compressedDataExtension
 }
+#endif

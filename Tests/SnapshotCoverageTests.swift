@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import Testing
 @testable import ReducerArchitecture
@@ -126,3 +127,4 @@ extension SessionTraceTests.SessionTraceCoverageTests {
         return nil
     }
 }
+#endif
