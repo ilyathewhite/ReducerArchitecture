@@ -63,5 +63,5 @@ let package = Package(
             exclude: ["TestApp", "TestSupport", ".DS_Store"]
         )
     ],
-    swiftLanguageModes: [.v5]
+    swiftLanguageModes: [.v6]
 )

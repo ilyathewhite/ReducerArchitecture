@@ -92,7 +92,7 @@ final class LiveTraceEnvelopeCollector: @unchecked Sendable {
 
     func waitForFirstStableSession(
         timeout: Duration = .seconds(1),
-        where predicate: (TraceSession) -> Bool = { _ in true }
+        where predicate: @Sendable (TraceSession) -> Bool = { _ in true }
     ) async throws -> TraceSession {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)

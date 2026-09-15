@@ -305,7 +305,7 @@ extension StateStoreTests.StateStoreCoreTests {
         let (values, continuation) = AsyncStream<Int>.makeStream()
         let (started, startContinuation) = AsyncStream<Void>.makeStream()
         var didFinish = false
-        let observe: (CounterNsp.Store.Effect.AsyncActionCallback) async -> Void = { send in
+        let observe: @MainActor (CounterNsp.Store.Effect.AsyncActionCallback) async -> Void = { send in
             startContinuation.yield(())
             for await value in values {
                 send(.mutating(.set(value)))

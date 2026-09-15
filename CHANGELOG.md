@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- Work around Swift's generic isolated-deinitializer optimizer crash on compilers before 6.4
+  ([swiftlang/swift#87462](https://github.com/swiftlang/swift/issues/87462)). Disable optimization only for the
+  affected deinitializers, preserving main-actor cleanup, deployment targets, and optimization elsewhere.
+- Build the package and its tests in Swift 6 language mode, retaining the Swift 6.2 toolchain requirement.
+- Isolate async effect closures and `AsyncActionCallback` to the main actor. State, environments, and actions
+  can remain non-`Sendable`.
+- Buffer callback-produced actions with `MainActorValueSource`, keeping their payloads on the main actor.
+- Preserve `.publisher` effects and publisher observation/binding APIs. Publisher effects now deliver upstream
+  emissions through the main queue, and cancel their subscriptions on the main actor.
+
+### Migration from 2.0.0
+
+Inline async effect closures continue to infer their isolation. Add `@MainActor` to explicitly typed closures
+passed to `.asyncAction`, `.asyncActionLatest`, `.asyncActions`, `.asyncActionSequence`, or
+`.asyncActionSequenceLatest`. Invoke `AsyncActionCallback` on the main actor.
+
 ## 2.0.0
 
 - Require Swift tools 6.2, iOS 18, macOS 15, and tvOS 18; retain Swift 5 language mode.

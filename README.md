@@ -4,12 +4,12 @@ TRA (the reducer architecture) is inspired by a very early version of TCA.
 
 ## Requirements
 
-- Swift 6.2 or later toolchain; the package uses Swift 5 language mode.
+- Swift 6.2 or later toolchain; the package uses Swift 6 language mode.
 - iOS 18, macOS 15, or tvOS 18 or later.
 
 ## Key Differences from TCA
 
-For breaking changes and migration instructions, see [2.0.0 migration notes](CHANGELOG.md).
+For breaking changes and migration instructions, see the [migration notes](CHANGELOG.md).
 
 While both frameworks are based on the same idea of having a store, state, and a reducer function, they differ quite a bit in the implementation details.
 

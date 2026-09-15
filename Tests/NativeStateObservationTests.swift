@@ -107,11 +107,11 @@ extension StateStoreTests.NativeStateObservationTests {
         })
         var iterator = updates.makeAsyncIterator()
         store.send(.mutating(.set(nil)))
-        let observation = Task { @MainActor in await iterator.next() }
+        let observation = Task { @MainActor in await iterator.next() == nil }
         var readiness = started.makeAsyncIterator()
         await readiness.next()
         observation.cancel()
-        #expect(await observation.value == nil)
+        #expect(await observation.value)
         continuation.finish()
         #expect(!store.isCancelled)
 

@@ -148,6 +148,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         /// Swift doesn't allow default arguments in closures.
         /// This type provides a workaround, making it possible to call the wrapped callback
         /// with only the action, ommiting animation if it's nil.
+        @MainActor
         public struct AsyncActionCallback {
             private let callback: (Action, Animation?, String, Int) -> Void
 
@@ -171,11 +172,11 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 
         case action(Action, Animation? = nil)
         case actions([Action], Animation? = nil)
-        case asyncAction(Animation? = nil, () async -> Action)
-        case asyncActionLatest(key: String, Animation? = nil, () async -> Action)
-        case asyncActions(Animation? = nil, () async -> [Action])
-        case asyncActionSequence((_ callback: AsyncActionCallback) async -> Void)
-        case asyncActionSequenceLatest(key: String, (_ callback: AsyncActionCallback) async -> Void)
+        case asyncAction(Animation? = nil, @MainActor () async -> Action)
+        case asyncActionLatest(key: String, Animation? = nil, @MainActor () async -> Action)
+        case asyncActions(Animation? = nil, @MainActor () async -> [Action])
+        case asyncActionSequence(@MainActor (_ callback: AsyncActionCallback) async -> Void)
+        case asyncActionSequenceLatest(key: String, @MainActor (_ callback: AsyncActionCallback) async -> Void)
         case asyncSequence(any AsyncSequence<Action, Never>, Animation? = nil)
         case publisher(AnyPublisher<Action, Never>, Animation? = nil)
         case none // cannot use Effect? in reducer callbacks because it breaks the compiler
@@ -259,6 +260,10 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 #endif
     }
 
+#if compiler(<6.4)
+    // Avoid the generic isolated-deinit optimizer crash: https://github.com/swiftlang/swift/issues/87462
+    @_optimize(none)
+#endif
     isolated deinit {
         publishedValue.finish()
         stateValues.finish()
@@ -302,7 +307,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     }
 
     private static func runAsyncAction(
-        _ asyncAction: () async -> Action,
+        _ asyncAction: @MainActor () async -> Action,
         animation: Animation?,
         storeProvider: @escaping () -> StateStore?,
         trace: SessionTraceSendContext = .system
@@ -323,7 +328,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         taskManager: TaskManager,
         cancellingPreviousWithKey key: String? = nil,
         animation: Animation?,
-        asyncAction: @escaping () async -> Action,
+        asyncAction: @escaping @MainActor () async -> Action,
         storeProvider: @escaping () -> StateStore?,
         trace: SessionTraceSendContext = .system
     ) -> Task<Void, Never> {
@@ -340,31 +345,32 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     private static func addAsyncActionSequenceTask(
         taskManager: TaskManager,
         cancellingPreviousWithKey key: String? = nil,
-        asyncActionSequence: @escaping (_ callback: Effect.AsyncActionCallback) async -> Void,
+        asyncActionSequence: @escaping @MainActor (_ callback: Effect.AsyncActionCallback) async -> Void,
         storeProvider: @escaping () -> StateStore?,
         trace: SessionTraceSendContext = .system
     ) -> Task<Void, Never> {
-        let (stream, continuation) = AsyncStream<(Action, Animation?, String, Int)>.makeStream()
+        let source = MainActorValueSource<(Action, Animation?, String, Int)>()
+        let iterator = source.values.makeAsyncIterator()
 
         let producer = taskManager.addTask(cancellingPreviousWithKey: key.map { "\($0)-producer" }) {
             await withTaskCancellationHandler(
                 operation: {
                     let callback = Effect.AsyncActionCallback { action, anim, file, line in
                         guard !Task.isCancelled else { return }
-                        continuation.yield((action, anim, file, line))
+                        source.send((action, anim, file, line))
                     }
                     await asyncActionSequence(callback)
-                    continuation.finish()
+                    source.finish()
                 },
                 onCancel: {
-                    continuation.finish()
+                    Task { @MainActor in source.finish() }
                 }
             )
         }
 
         let consumer = taskManager.addTask(cancellingPreviousWithKey: key.map { "\($0)-consumer" }) {
             await consumeActions(
-                iterator: stream.makeAsyncIterator(),
+                iterator: iterator,
                 storeProvider: storeProvider,
                 mapToAction: { action, anim, _, _ in
                     (action, anim)
@@ -571,21 +577,24 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             if dispatchingSyncEffect {
                 assertionFailure()
             }
-            let (stream, continuation) = AsyncStream<Action>.makeStream()
+            let source = MainActorValueSource<Action>()
+            let iterator = source.values.makeAsyncIterator()
             return taskManager.addTask { [weak self] in
-                let cancellable = publisher.sink(
+                // Combine may emit on any queue. Deliver to the main actor before handling non-Sendable actions.
+                let cancellable = publisher.receive(on: DispatchQueue.main).sink(
                     receiveCompletion: { _ in
-                        continuation.finish()
+                        source.finish()
                     },
                     receiveValue: { action in
-                        continuation.yield(action)
+                        source.send(action)
                     }
                 )
+                let cancelSubscription: @MainActor @Sendable () -> Void = { cancellable.cancel() }
 
                 await withTaskCancellationHandler(
                     operation: {
                         await Self.consumeActions(
-                            iterator: stream.makeAsyncIterator(),
+                            iterator: iterator,
                             storeProvider: { [weak self] in self },
                             mapToAction: { ($0, anim) },
                             trace: effectActionTrace
@@ -593,8 +602,11 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                         cancellable.cancel()
                     },
                     onCancel: {
-                        cancellable.cancel()
-                        continuation.finish()
+                        // Cancellation handlers can run on any executor; subscriptions stay on the main actor.
+                        Task { @MainActor in
+                            cancelSubscription()
+                            source.finish()
+                        }
                     }
                 )
             }
@@ -855,7 +867,7 @@ public extension StateStore {
         }
     
     func updates<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> AnyPublisher<Value, Never> {
-        updates(on: keyPath, compare: ==)
+        updates(on: keyPath, compare: { $0 == $1 })
     }
 
     func updates<Value>(
@@ -871,7 +883,7 @@ public extension StateStore {
     }
 
     func updates<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> MainActorSequence<Value> {
-        updates(on: keyPath, compare: ==)
+        updates(on: keyPath, compare: { $0 == $1 })
     }
     
     func distinctValues<Value>(
@@ -883,7 +895,7 @@ public extension StateStore {
         }
     
     func distinctValues<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> AnyPublisher<Value, Never> {
-        distinctValues(on: keyPath, compare: ==)
+        distinctValues(on: keyPath, compare: { $0 == $1 })
     }
 
     // AsyncAlgorithms' removeDuplicates accepts a nonisolated @Sendable async predicate.
@@ -895,6 +907,10 @@ public extension StateStore {
     private final class ObservedStateValue<Value> {
         let value: Value
         init(_ value: Value) { self.value = value }
+#if compiler(<6.4)
+        // Avoid the generic isolated-deinit optimizer crash: https://github.com/swiftlang/swift/issues/87462
+        @_optimize(none)
+#endif
         isolated deinit {}
     }
 
@@ -915,7 +931,7 @@ public extension StateStore {
     }
 
     func distinctValues<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> MainActorSequence<Value> {
-        distinctValues(on: keyPath, compare: ==)
+        distinctValues(on: keyPath, compare: { $0 == $1 })
     }
 
     @discardableResult
@@ -945,7 +961,7 @@ public extension StateStore {
         on keyPath: KeyPath<OtherNsp.StoreState, OtherValue>,
         with action: @escaping (OtherValue) -> Action?
     ) -> Task<Void, Never>? {
-        bind(to: otherStore, on: keyPath, with: action, compare: ==)
+        bind(to: otherStore, on: keyPath, with: action, compare: { $0 == $1 })
     }
     
     @discardableResult
