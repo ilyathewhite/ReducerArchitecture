@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## 2.0.1
 
+This release completes the Swift 6 migration started in 2.0.0. Despite the patch version,
+explicitly typed async effect closures may require source changes; see the migration notes below.
+
+- Require FoundationEx 1.1.0, GraphStorage 1.1.0, and AsyncNavigation 2.0.1.
 - Work around Swift's generic isolated-deinitializer optimizer crash on compilers before 6.4
   ([swiftlang/swift#87462](https://github.com/swiftlang/swift/issues/87462)). Disable optimization only for the
   affected deinitializers, preserving main-actor cleanup, deployment targets, and optimization elsewhere.

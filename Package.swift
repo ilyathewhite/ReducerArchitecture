@@ -18,11 +18,11 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/ilyathewhite/FoundationEx.git", exact: "1.0.15"),
-        .package(url: "https://github.com/ilyathewhite/AsyncNavigation.git", exact: "2.0.0"),
+        .package(url: "https://github.com/ilyathewhite/FoundationEx.git", exact: "1.1.0"),
+        .package(url: "https://github.com/ilyathewhite/AsyncNavigation.git", exact: "2.0.1"),
         .package(url: "https://github.com/apple/swift-async-algorithms.git", exact: "1.1.5"),
         .package(url: "https://github.com/pointfreeco/swift-tagged.git", exact: "0.10.0"),
-        .package(url: "https://github.com/ilyathewhite/GraphStorage.git", exact: "1.0.1")
+        .package(url: "https://github.com/ilyathewhite/GraphStorage.git", exact: "1.1.0")
     ],
     targets: [
         .target(
