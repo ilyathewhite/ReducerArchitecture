@@ -1,6 +1,7 @@
 #if DEBUG
 import Foundation
 import FoundationEx
+import AsyncAlgorithms
 import Testing
 @testable import ReducerArchitecture
 
@@ -274,6 +275,31 @@ extension SessionTraceTests.SessionGraphTests {
             })
         )
         #expect(containsEdges.filter { $0.batchID == batchNode.id }.count == 2)
+    }
+
+    @Test
+    func asyncSequenceRecordsAnimationAndActionSources() async throws {
+        let store = SessionGraphHarnessNsp.store()
+        let collectionTask = liveTraceCollectionTask(for: store)
+        let actions: [SessionGraphHarnessNsp.Store.Action] = [.mutating(.append(1)), .mutating(.append(2))]
+        await store.addEffect(.asyncSequence(actions.async, .default))?.value
+
+        let graph = try await collectionTask.value.sessionGraph
+        let effect = try #require(graph.nodes.compactMap { node -> SessionGraph.EffectNode? in
+            guard case .effect(let effect) = node, effect.kind == .asyncSequence else { return nil }
+            return effect
+        }.first)
+        #expect(effect.animationGroupID != nil)
+        #expect(effect.isAsynchronous)
+        #expect(effect.isLongLived)
+        #expect(effect.emittedActionCount == 2)
+        let emittedActions = graph.nodes.compactMap { node -> SessionGraph.ActionNode? in
+            guard case .action(let action) = node, action.source == .effect(effectID: effect.id) else { return nil }
+            return action
+        }
+        #expect(emittedActions.count == 2)
+        #expect(emittedActions.allSatisfy { $0.animationGroupID == effect.animationGroupID })
+        #expect(store.state.values == [1, 2])
     }
 
     @Test

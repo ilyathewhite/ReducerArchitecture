@@ -16,6 +16,7 @@ public func withAnimation<Result>(_ animation: Animation? = nil, _ body: () thro
 
 import Foundation
 import Combine
+import AsyncAlgorithms
 import os
 
 private func apply<T>(_ animation: Animation? = nil, _ body: () -> T) -> T {
@@ -175,9 +176,10 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         case asyncActions(Animation? = nil, () async -> [Action])
         case asyncActionSequence((_ callback: AsyncActionCallback) async -> Void)
         case asyncActionSequenceLatest(key: String, (_ callback: AsyncActionCallback) async -> Void)
+        case asyncSequence(any AsyncSequence<Action, Never>, Animation? = nil)
         case publisher(AnyPublisher<Action, Never>, Animation? = nil)
         case none // cannot use Effect? in reducer callbacks because it breaks the compiler
-        
+
         init(_ e: SyncEffect) {
             switch e {
             case .action(let value):
@@ -269,15 +271,16 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 #endif
     }
 
-    private static func consumeActions<Element>(
-        from stream: AsyncStream<Element>,
+    private static func consumeActions<Iterator: AsyncIteratorProtocol>(
+        iterator: Iterator,
         storeProvider: @escaping () -> StateStore?,
-        mapToAction: (Element) -> (Action, Animation?),
-        callSite: ((Element) -> (String?, Int?))? = nil,
+        mapToAction: (Iterator.Element) -> (Action, Animation?),
+        callSite: ((Iterator.Element) -> (String?, Int?))? = nil,
         trace: SessionTraceSendContext = .system
-    ) async {
+    ) async where Iterator.Failure == Never {
+        var iterator = iterator
         await withTaskGroup(of: Void.self) { group in
-            for await element in stream {
+            while let element = await iterator.next(isolation: MainActor.shared) {
                 guard !Task.isCancelled else { return }
                 guard let store = storeProvider() else { return }
                 guard !store.isCancelled else { return }
@@ -306,15 +309,14 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     ) async {
         let action = await asyncAction()
         guard !Task.isCancelled else { return }
-        guard let store = storeProvider() else { return }
-        guard !store.isCancelled else { return }
-        if let task = store.send(
-            .code(action),
-            animation,
-            trace: trace
-        ) {
-            await task.value
+        let task: Task<Void, Never>?
+        // Release the store before waiting for a nested effect, which may be a long-lived observation.
+        do {
+            guard let store = storeProvider() else { return }
+            guard !store.isCancelled else { return }
+            task = store.send(.code(action), animation, trace: trace)
         }
+        await task?.value
     }
 
     private static func addAsyncActionTask(
@@ -362,7 +364,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 
         let consumer = taskManager.addTask(cancellingPreviousWithKey: key.map { "\($0)-consumer" }) {
             await consumeActions(
-                from: stream,
+                iterator: stream.makeAsyncIterator(),
                 storeProvider: storeProvider,
                 mapToAction: { action, anim, _, _ in
                     (action, anim)
@@ -375,8 +377,16 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         }
 
         return Task {
-            await producer.value
-            await consumer.value
+            await withTaskCancellationHandler(
+                operation: {
+                    await producer.value
+                    await consumer.value
+                },
+                onCancel: {
+                    producer.cancel()
+                    consumer.cancel()
+                }
+            )
         }
     }
 
@@ -541,6 +551,22 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 trace: effectActionTrace
             )
 
+        case let .asyncSequence(sequence, anim):
+            if dispatchingSyncEffect {
+                assertionFailure()
+            }
+            guard !isCancelled else { return nil }
+            // Register before scheduling so values sent immediately after addEffect are buffered.
+            let iterator = sequence.makeAsyncIterator()
+            return taskManager.addTask { [weak self] in
+                await Self.consumeActions(
+                    iterator: iterator,
+                    storeProvider: { [weak self] in self },
+                    mapToAction: { ($0, anim) },
+                    trace: effectActionTrace
+                )
+            }
+
         case let .publisher(publisher, anim):
             if dispatchingSyncEffect {
                 assertionFailure()
@@ -559,7 +585,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
                 await withTaskCancellationHandler(
                     operation: {
                         await Self.consumeActions(
-                            from: stream,
+                            iterator: stream.makeAsyncIterator(),
                             storeProvider: { [weak self] in self },
                             mapToAction: { ($0, anim) },
                             trace: effectActionTrace
@@ -815,6 +841,10 @@ public extension StateStore {
         stateValues.values.map { $0[keyPath: keyPath] }
     }
 
+    func values<Value>(on keyPath: KeyPath<State, Value>) -> MainActorSequence<Value> {
+        asyncValues(on: keyPath)
+    }
+
     func updates<Value>(
         on keyPath: KeyPath<State, Value>,
         compare: @escaping (Value, Value) -> Bool) -> AnyPublisher<Value, Never> {
@@ -827,6 +857,22 @@ public extension StateStore {
     func updates<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> AnyPublisher<Value, Never> {
         updates(on: keyPath, compare: ==)
     }
+
+    func updates<Value>(
+        on keyPath: KeyPath<State, Value>,
+        compare: @escaping (Value, Value) -> Bool
+    ) -> MainActorSequence<Value> {
+        let values: MainActorSequence<Value> = distinctValues(on: keyPath, compare: compare)
+        let updates = values.dropFirst()
+        return MainActorSequence {
+            var iterator = updates.makeAsyncIterator()
+            return { await iterator.next(isolation: MainActor.shared) }
+        }
+    }
+
+    func updates<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> MainActorSequence<Value> {
+        updates(on: keyPath, compare: ==)
+    }
     
     func distinctValues<Value>(
         on keyPath: KeyPath<State, Value>,
@@ -837,6 +883,38 @@ public extension StateStore {
         }
     
     func distinctValues<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> AnyPublisher<Value, Never> {
+        distinctValues(on: keyPath, compare: ==)
+    }
+
+    // AsyncAlgorithms' removeDuplicates accepts a nonisolated @Sendable async predicate.
+    // The store's MainActor isolation does not extend into that operator, so passing our
+    // MainActor comparison requires Sendable arguments. This MainActor class is implicitly
+    // Sendable while access to its payload and its destruction remain on MainActor.
+    // Unlike PublishedValue, observed state values do not have to conform to Sendable.
+    @MainActor
+    private final class ObservedStateValue<Value> {
+        let value: Value
+        init(_ value: Value) { self.value = value }
+        isolated deinit {}
+    }
+
+    /// Current value followed by distinct changes. Values and comparisons remain on the main actor.
+    func distinctValues<Value>(
+        on keyPath: KeyPath<State, Value>,
+        compare: @escaping (Value, Value) -> Bool
+    ) -> MainActorSequence<Value> {
+        let compareValues: @MainActor @Sendable (ObservedStateValue<Value>, ObservedStateValue<Value>) async -> Bool = {
+            compare($0.value, $1.value)
+        }
+        let stateValues: MainActorSequence<Value> = values(on: keyPath)
+        let values = stateValues.map { ObservedStateValue($0) }.removeDuplicates(by: compareValues)
+        return MainActorSequence {
+            var iterator = values.makeAsyncIterator()
+            return { await iterator.next(isolation: MainActor.shared)?.value }
+        }
+    }
+
+    func distinctValues<Value: Equatable>(on keyPath: KeyPath<State, Value>) -> MainActorSequence<Value> {
         distinctValues(on: keyPath, compare: ==)
     }
 

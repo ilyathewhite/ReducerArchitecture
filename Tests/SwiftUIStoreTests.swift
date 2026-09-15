@@ -10,11 +10,13 @@ private enum SwiftUIHarnessNsp: StoreUINamespace {
 
     enum MutatingAction {
         case set(Int)
+        case setOptional(Int?)
     }
 
     struct StoreState: Equatable {
         var value = 0
         var mutationCount = 0
+        var optionalValue: Int?
     }
 
     struct ContentView: StoreContentView {
@@ -43,6 +45,10 @@ extension SwiftUIHarnessNsp {
             state.value = value
             state.mutationCount += 1
             return .none
+        case .setOptional(let value):
+            state.optionalValue = value
+            state.mutationCount += 1
+            return .none
         }
     }
 }
@@ -53,6 +59,54 @@ extension SwiftUIStoreTests {
 
 extension SwiftUIStoreTests.StateStoreSwiftUITests {
     // MARK: - Bindings
+
+    @Test(arguments: [false, true])
+    func bindingDoesNotRetainStoreAndIgnoresWritesAfterRelease(animated: Bool) {
+        var store: SwiftUIHarnessNsp.Store? = SwiftUIHarnessNsp.store(value: 3)
+        weak var weakStore = store
+        var actionCount = 0
+        let binding = store!.binding(\.value, { value in
+            actionCount += 1
+            return .set(value)
+        }, animation: animated ? .default : nil)
+
+        #expect(binding.wrappedValue == 3)
+        store!.send(.mutating(.set(5)))
+        #expect(binding.wrappedValue == 5)
+
+        binding.wrappedValue = 5
+        #expect(actionCount == 0)
+        #expect(store!.state.mutationCount == 1)
+
+        binding.wrappedValue = 7
+        #expect(actionCount == 1)
+        #expect(store!.state.value == 7)
+        #expect(store!.state.mutationCount == 2)
+
+        store = nil
+        #expect(weakStore == nil)
+        #expect(binding.wrappedValue == 7)
+        binding.wrappedValue = 11
+        #expect(actionCount == 1)
+        #expect(binding.wrappedValue == 7)
+    }
+
+    @Test
+    func bindingPreservesLastReadNilAfterStoreRelease() {
+        var store: SwiftUIHarnessNsp.Store? = .init(.init(optionalValue: 42), env: nil)
+        weak var weakStore = store
+        let binding = store!.binding(\.optionalValue, { .setOptional($0) })
+        #expect(binding.wrappedValue == 42)
+
+        store!.send(.mutating(.setOptional(nil)))
+        #expect(binding.wrappedValue == nil)
+        store = nil
+
+        #expect(weakStore == nil)
+        #expect(binding.wrappedValue == nil)
+        binding.wrappedValue = 7
+        #expect(binding.wrappedValue == nil)
+    }
 
     // Write through animated binding setter.
     // Expect state mutation and mutation count increment.
@@ -83,6 +137,26 @@ extension SwiftUIStoreTests.StateStoreSwiftUITests {
 
         // Expect binding mirrors latest value.
         #expect(binding.wrappedValue == 9)
+    }
+
+    @Test
+    func readOnlyBindingDoesNotRetainStoreAndPreservesLastReadValues() {
+        var store: SwiftUIHarnessNsp.Store? = .init(.init(value: 3, optionalValue: 42), env: nil)
+        weak var weakStore = store
+        let binding = store!.readOnlyBinding(\.value)
+        let optionalBinding = store!.readOnlyBinding(\.optionalValue)
+        #expect(binding.wrappedValue == 3)
+        #expect(optionalBinding.wrappedValue == 42)
+
+        store!.send(.mutating(.set(9)))
+        store!.send(.mutating(.setOptional(nil)))
+        #expect(binding.wrappedValue == 9)
+        #expect(optionalBinding.wrappedValue == nil)
+        store = nil
+
+        #expect(weakStore == nil)
+        #expect(binding.wrappedValue == 9)
+        #expect(optionalBinding.wrappedValue == nil)
     }
 
     // MARK: - Namespace Defaults

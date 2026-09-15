@@ -5,6 +5,7 @@
 import SwiftUI
 
 public extension StateStore {
+    /// Does not retain the store. After release, reads return the last observed value and writes are ignored.
     func binding<Value>(
         _ keyPath: KeyPath<State, Value>,
         _ action: @escaping (Value) -> MutatingAction,
@@ -14,24 +15,35 @@ public extension StateStore {
     ->
     Binding<Value> where Value: Equatable
     {
+        var lastValue = state[keyPath: keyPath]
         return Binding(
-            get: { self.state[keyPath: keyPath] },
-            set: {
-                if self.state[keyPath: keyPath] != $0 {
+            get: { [weak self] in
+                if let self { lastValue = self.state[keyPath: keyPath] }
+                return lastValue
+            },
+            set: { [weak self] value in
+                guard let self else { return }
+                if self.state[keyPath: keyPath] != value {
                     if let animation = animation {
-                        self.send(.mutating(action($0), animated: true, animation))
+                        self.send(.mutating(action(value), animated: true, animation))
                     }
                     else {
-                        self.send(.mutating(action($0)), file: file, line: line)
+                        self.send(.mutating(action(value)), file: file, line: line)
                     }
                 }
+                lastValue = self.state[keyPath: keyPath]
             }
         )
     }
 
+    /// Does not retain the store. After release, reads return the last observed value.
     func readOnlyBinding<Value>(_ keyPath: KeyPath<State, Value>) -> Binding<Value> {
+        var lastValue = state[keyPath: keyPath]
         return Binding(
-            get: { self.state[keyPath: keyPath] },
+            get: { [weak self] in
+                if let self { lastValue = self.state[keyPath: keyPath] }
+                return lastValue
+            },
             set: { _ in
                 assertionFailure()
             }

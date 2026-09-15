@@ -3,7 +3,6 @@
 
 #if DEBUG
 import Foundation
-import Combine
 import FoundationEx
 import os
 #if canImport(SwiftUI)
@@ -638,6 +637,14 @@ extension StateStore {
                 isLongLived: true,
                 cancellationKey: key,
                 hasAnimation: false
+            )
+        case let .asyncSequence(_, animation):
+            return .init(
+                kind: .asyncSequence,
+                isAsynchronous: true,
+                isLongLived: true,
+                cancellationKey: nil,
+                hasAnimation: animation != nil
             )
         case let .publisher(_, animation):
             return .init(

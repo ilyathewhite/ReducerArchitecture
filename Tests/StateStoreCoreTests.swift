@@ -296,6 +296,47 @@ extension StateStoreTests.StateStoreCoreTests {
         #expect(store.state.mutationCount == 1)
     }
 
+    @Test(arguments: [false, true], [false, true])
+    func cancellingSequenceHandleStopsObservationWithoutCancellingStore(
+        latest: Bool,
+        waitUntilStarted: Bool
+    ) async throws {
+        let store = CounterNsp.store(value: 0)
+        let (values, continuation) = AsyncStream<Int>.makeStream()
+        let (started, startContinuation) = AsyncStream<Void>.makeStream()
+        var didFinish = false
+        let observe: (CounterNsp.Store.Effect.AsyncActionCallback) async -> Void = { send in
+            startContinuation.yield(())
+            for await value in values {
+                send(.mutating(.set(value)))
+            }
+            didFinish = true
+            send(.mutating(.set(99)))
+        }
+        let effect: CounterNsp.Store.Effect = latest
+            ? .asyncActionSequenceLatest(key: "observe", observe)
+            : .asyncActionSequence(observe)
+        let task = try #require(store.addEffect(effect))
+        if waitUntilStarted {
+            var iterator = started.makeAsyncIterator()
+            await iterator.next()
+        }
+
+        task.cancel()
+        await task.value
+
+        #expect(didFinish)
+        #expect(store.state.value == 0)
+        #expect(!store.isCancelled)
+        guard case .terminated = continuation.yield(1)
+        else {
+            Issue.record("Cancelling the effect handle must end its source subscription")
+            return
+        }
+        store.send(.mutating(.set(2)))
+        #expect(store.state.value == 2)
+    }
+
     // Cancel parent store with child attached.
     // Expect parent ignores later actions and child cancels.
     @Test

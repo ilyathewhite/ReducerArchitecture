@@ -284,6 +284,8 @@ public struct SessionGraph: Codable, Equatable, Sendable {
             case asyncActionSequence
             /// `.asyncActionSequenceLatest`
             case asyncActionSequenceLatest
+            /// `.asyncSequence`
+            case asyncSequence
             /// `.publisher`
             case publisher
             /// `.none`
