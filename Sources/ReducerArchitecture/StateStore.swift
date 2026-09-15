@@ -16,7 +16,6 @@ public func withAnimation<Result>(_ animation: Animation? = nil, _ body: () thro
 
 import Foundation
 import Combine
-import CombineEx
 import os
 
 private func apply<T>(_ animation: Animation? = nil, _ body: () -> T) -> T {
@@ -33,7 +32,7 @@ public protocol StoreNamespace {
     associatedtype StoreState
     associatedtype MutatingAction
     associatedtype EffectAction
-    associatedtype PublishedValue
+    associatedtype PublishedValue: Sendable
 
     @MainActor
     static func reduce(_ state: inout StoreState, _ action: MutatingAction) -> StateStore<Self>.SyncEffect
@@ -92,7 +91,6 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     public typealias Environment = Nsp.StoreEnvironment
     public typealias State = Nsp.StoreState
     
-    public typealias ValuePublisher = AnyPublisher<PublishedValue, Cancel>
     
     public enum Action {
         case mutating(MutatingAction, animated: Bool = false, Animation? = nil)
@@ -224,10 +222,12 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
     var liveTraceChildKeyInParentStore: String?
 #endif
 
-    @Published public private(set) var state: State
-    public private(set) var publishedValue = PassthroughSubject<PublishedValue, Cancel>()
-    public private(set) var isCancelled = false
-    public var hasRequest = false
+    @Published public private(set) var state: State {
+        didSet { stateValues.send(state) }
+    }
+    private let stateValues: MainActorValueSource<State>
+    public let publishedValue = PublishedValues<PublishedValue>()
+    @Published public private(set) var isCancelled = false
 
     nonisolated
     public static var storeDefaultKey: String {
@@ -245,6 +245,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
         self.liveTraceChildKeyInParentStore = nil
 #endif
         self.state = initialValue
+        self.stateValues = MainActorValueSource(initialValue: initialValue)
         self.environment = env
 
 #if DEBUG
@@ -256,15 +257,17 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
 #endif
     }
 
+    isolated deinit {
+        publishedValue.finish()
+        stateValues.finish()
 #if DEBUG
-    deinit {
         Self.notifyLiveTraceStoreEndedOnDeinit(
             metadata: liveTraceMetadata,
             handler: liveTraceHandler,
             logger: logConfig.logger
         )
-    }
 #endif
+    }
 
     private static func consumeActions<Element>(
         from stream: AsyncStream<Element>,
@@ -708,6 +711,7 @@ public final class StateStore<Nsp: StoreNamespace>: AnyStore {
             case .cancel:
                 _cancel()
                 isCancelled = true
+                stateValues.finish()
                 taskManager.cancelAllTasks()
                 if shouldRecordActionTrace {
                     cancelAllActiveSessionTraceEffectsIfNeeded(actionTrace)
@@ -802,24 +806,13 @@ public extension StateStore {
         
         return $state
             .map(keyPath)
-            .prefix(untilOutputFrom: isCancelledPublisher)
+            .prefix(untilOutputFrom: $isCancelled.filter { $0 })
             .eraseToAnyPublisher()
     }
     
-    func asyncValues<Value>(on keyPath: KeyPath<State, Value>) -> AsyncStream<Value> {
-        let (stream, continuation) = AsyncStream<Value>.makeStream()
-        let cancellable = values(on: keyPath).sink(
-            receiveCompletion: { _ in
-                continuation.finish()
-            },
-            receiveValue: { value in
-                continuation.yield(value)
-            }
-        )
-        continuation.onTermination = { _ in
-            cancellable.cancel()
-        }
-        return stream
+    /// Current state followed by every mutation, buffered separately for each main-actor iterator.
+    func asyncValues<Value>(on keyPath: KeyPath<State, Value>) -> MainActorSequence<Value> {
+        stateValues.values.map { $0[keyPath: keyPath] }
     }
 
     func updates<Value>(
@@ -855,15 +848,17 @@ public extension StateStore {
         animation: Animation? = nil,
         compare: @escaping (OtherValue, OtherValue) -> Bool
     ) -> Task<Void, Never>? {
-        addEffect(
-            .publisher(
-                otherStore
-                    .distinctValues(on: keyPath, compare: compare)
-                    .compactMap { action($0) }
-                    .eraseToAnyPublisher(),
-                animation
-            )
-        )
+        // Subscribe before scheduling the effect so synchronous mutations cannot race registration.
+        var iterator = otherStore.asyncValues(on: keyPath).makeAsyncIterator()
+        return addEffect(.asyncActionSequence { send in
+            var previous: OtherValue?
+            while let value = await iterator.next() {
+                guard !Task.isCancelled else { return }
+                if let previous, compare(previous, value) { continue }
+                previous = .some(value)
+                if let action = action(value) { send(action, animation) }
+            }
+        })
     }
     
     @discardableResult
@@ -881,14 +876,19 @@ public extension StateStore {
         with action: @escaping (OtherNsp.PublishedValue) -> Action,
         animation: Animation? = nil
     ) -> Task<Void, Never>? {
-        addEffect(
-            .publisher(
-                otherStore.value.map { action($0) }
-                    .catch { _ in Just(.cancel) }
-                    .eraseToAnyPublisher(),
-                animation
-            )
-        )
+        var iterator = otherStore.throwingAsyncValues.makeAsyncIterator()
+        return addEffect(.asyncActionSequence { send in
+            do {
+                while let value = try await iterator.next() {
+                    guard !Task.isCancelled else { return }
+                    send(action(value), animation)
+                }
+            }
+            catch {
+                guard !Task.isCancelled else { return }
+                send(.cancel, animation)
+            }
+        })
     }
 }
 

@@ -1,11 +1,11 @@
-// swift-tools-version:5.3
+// swift-tools-version:6.2
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 import PackageDescription
 
 let package = Package(
     name: "ReducerArchitecture",
     platforms: [
-        .macOS("13.0"), .iOS("16.0"), .tvOS(.v14)
+        .macOS(.v15), .iOS(.v18), .tvOS(.v18)
     ],
     products: [
         .library(
@@ -18,18 +18,16 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/ilyathewhite/FoundationEx.git", .exact("1.0.15")),
-        .package(url: "https://github.com/ilyathewhite/CombineEx.git", .exact("1.0.5")),
-        .package(url: "https://github.com/ilyathewhite/AsyncNavigation.git", .exact("1.0.13")),
-        .package(url: "https://github.com/pointfreeco/swift-tagged.git", .exact("0.10.0")),
-        .package(url: "https://github.com/ilyathewhite/GraphStorage.git", .exact("1.0.1"))
+        .package(url: "https://github.com/ilyathewhite/FoundationEx.git", exact: "1.0.15"),
+        .package(url: "https://github.com/ilyathewhite/AsyncNavigation.git", exact: "2.0.0"),
+        .package(url: "https://github.com/pointfreeco/swift-tagged.git", exact: "0.10.0"),
+        .package(url: "https://github.com/ilyathewhite/GraphStorage.git", exact: "1.0.1")
     ],
     targets: [
         .target(
             name: "ReducerArchitecture",
             dependencies: [
                 "FoundationEx",
-                "CombineEx",
                 "AsyncNavigation",
                 .product(name: "Tagged", package: "swift-tagged"),
                 "GraphStorage"
@@ -45,7 +43,7 @@ let package = Package(
         ),
         .target(
             name: "TestSupport",
-            dependencies: ["FoundationEx", "CombineEx", "ReducerArchitecture"],
+            dependencies: ["FoundationEx", "ReducerArchitecture"],
             path: "Tests/TestSupport",
             swiftSettings: [
 //                .unsafeFlags([
@@ -62,5 +60,6 @@ let package = Package(
             path: "Tests",
             exclude: ["TestApp", "TestSupport", ".DS_Store"]
         )
-    ]
+    ],
+    swiftLanguageModes: [.v5]
 )
